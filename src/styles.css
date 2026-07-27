@@ -521,6 +521,10 @@ body.mobile-tutorial .tutorial-spotlight {
   margin-bottom: 14px;
 }
 
+.control-group[hidden] {
+  display: none !important;
+}
+
 .control-group.row {
   flex-direction: row;
   align-items: center;
