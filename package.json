@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 5173",
+    "preview": "npm run build && wrangler dev",
     "test:flower": "node scripts/verify-canonical-flower.mjs",
     "test:framing": "node scripts/verify-available-view-rect.mjs",
     "test:framing-calm": "node scripts/verify-calm-framing.mjs",
@@ -22,7 +22,8 @@
     "test:endless": "node scripts/verify-endless-geometry.mjs",
     "test:ui-cleanup": "node scripts/verify-hidden-ui.mjs",
     "test:dark-bg": "node scripts/verify-dark-background.mjs",
-    "test:menu": "node scripts/verify-menu-toggle.mjs"
+    "test:menu": "node scripts/verify-menu-toggle.mjs",
+    "deploy": "npm run build && wrangler deploy"
   },
   "repository": {
     "type": "git",
@@ -33,6 +34,8 @@
     "three": "^0.178.0"
   },
   "devDependencies": {
-    "vite": "^7.0.0"
+    "@cloudflare/vite-plugin": "^1.47.0",
+    "vite": "^7.0.0",
+    "wrangler": "^4.114.0"
   }
 }
