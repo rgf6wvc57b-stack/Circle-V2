@@ -193,6 +193,25 @@ for (let shellCount = 0; shellCount <= 3; shellCount += 1) {
     "individual reset reseeds the shell default"
   );
   assert(
+    /shellOrRingValue[\s\S]*?String\(shell\)/.test(main) &&
+      !/Shell \$\{shell\}/.test(main),
+    "sphere info value uses numeric shell only"
+  );
+  assert(
+    /xyzAxesRoot\.remove\(child\)/.test(main),
+    "XYZ axis cleanup removes children via Three.js remove()"
+  );
+  assert(
+    /xyzAxesRoot\.visible\s*=\s*ui\.showXYZAxes\s*&&\s*!hideWorld/.test(main),
+    "XYZ axes follow world decor hide rules"
+  );
+  assert(
+    /puppeteer-core@24/.test(
+      readFileSync(join(root, "scripts/verify-concentric-shell-colors.mjs"), "utf8")
+    ),
+    "shell color browser test pins puppeteer-core@24"
+  );
+  assert(
     /id:\s*"z"[\s\S]*?\[0,\s*0,\s*-nextLength\]/.test(main),
     "Z axis spans forward and backward"
   );

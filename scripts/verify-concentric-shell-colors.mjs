@@ -38,7 +38,7 @@ async function ensurePuppeteer() {
   try {
     return require("puppeteer-core");
   } catch {
-    await run("npm", ["install", "--no-save", "puppeteer-core@latest"]);
+    await run("npm", ["install", "--no-save", "puppeteer-core@24"]);
     return createRequire(import.meta.url)("puppeteer-core");
   }
 }
@@ -141,6 +141,23 @@ try {
     "sphere info reports the selected shell default",
     shellDefault
   );
+  assert(
+    !/Shell Shell|Ring Ring/i.test(selectedState.info),
+    "sphere info avoids duplicated Shell/Ring labels"
+  );
+  const shellInfoValue = await page.evaluate(() => {
+    const grid = document.getElementById("sphereInfoPanel")?.querySelector(".insp-grid");
+    if (!grid) return null;
+    const labels = [...grid.querySelectorAll("span")].map((node) => node.textContent.trim());
+    const values = [...grid.querySelectorAll("strong")].map((node) => node.textContent.trim());
+    const shellIndex = labels.indexOf("Shell");
+    return shellIndex >= 0 ? values[shellIndex] : null;
+  });
+  assert(
+    shellInfoValue === String(shell),
+    "sphere info value is the numeric shell number only",
+    shellInfoValue
+  );
 
   const override = "#123456";
   await page.$eval(
@@ -208,6 +225,90 @@ try {
       restoredIndividual.info.includes(shellDefault),
     "returning to individual mode preserves the shell default"
   );
+
+  await page.$eval("#showXYZAxes", (element) => {
+    element.checked = true;
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await sleep(150);
+
+  const axesVisibleNormal = await page.$eval(
+    "#viewport",
+    (element) => element.dataset.xyzAxesVisible
+  );
+  assert(axesVisibleNormal === "1", "XYZ axes visible in normal viewing mode");
+
+  await page.$eval("#constructionMode", (element) => {
+    element.checked = true;
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await sleep(400);
+  const axesHiddenConstruction = await page.$eval(
+    "#viewport",
+    (element) => element.dataset.xyzAxesVisible
+  );
+  assert(
+    axesHiddenConstruction === "0",
+    "XYZ axes hide in Construction Mode while toggle stays enabled"
+  );
+
+  await page.$eval("#constructionMode", (element) => {
+    element.checked = false;
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await sleep(400);
+  const axesRestoredConstruction = await page.$eval(
+    "#viewport",
+    (element) => element.dataset.xyzAxesVisible
+  );
+  assert(
+    axesRestoredConstruction === "1",
+    "XYZ axes restore after leaving Construction Mode"
+  );
+
+  await page.$eval("#evolutionMode", (element) => {
+    element.checked = true;
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await sleep(400);
+  const axesHiddenEvolution = await page.$eval(
+    "#viewport",
+    (element) => element.dataset.xyzAxesVisible
+  );
+  assert(
+    axesHiddenEvolution === "0",
+    "XYZ axes hide in Evolution Mode while toggle stays enabled"
+  );
+
+  await page.$eval("#evolutionMode", (element) => {
+    element.checked = false;
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await sleep(400);
+  const axesRestoredEvolution = await page.$eval(
+    "#viewport",
+    (element) => element.dataset.xyzAxesVisible
+  );
+  assert(
+    axesRestoredEvolution === "1",
+    "XYZ axes restore after leaving Evolution Mode"
+  );
+
+  const orbitBeforeReset = await page.$eval(
+    "#viewport",
+    (element) => element.dataset.orbitTarget
+  );
+  assert(orbitBeforeReset === "0,0,0", "orbit target remains at world origin");
+
+  await page.$eval("#resetView", (element) => element.click());
+  await sleep(900);
+  const resetViewState = await page.evaluate(() => ({
+    orbitTarget: document.getElementById("viewport")?.dataset.orbitTarget ?? null,
+    cameraDistance: Number(document.getElementById("viewport")?.dataset.cameraDistance ?? "0"),
+  }));
+  assert(resetViewState.orbitTarget === "0,0,0", "Reset View keeps orbit target at origin");
+  assert(resetViewState.cameraDistance > 0, "Reset View produces a fitted camera distance");
+
   assert(runtimeErrors.length === 0, "browser test has no runtime errors", runtimeErrors[0]);
 
   await browser.close();

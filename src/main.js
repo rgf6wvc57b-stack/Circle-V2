@@ -635,14 +635,14 @@ function updateSphereInfo() {
   const pt = center ? data?.points?.find((p) => p.id === center.pointId) : null;
   const dist = pt ? Math.hypot(pt.x, pt.y, pt.z) : 0;
   const shell = pt?.meta?.shell ?? center?.meta?.shell;
-  const ring =
+  const shellOrRingValue =
     shell != null
       ? shell === 0
-        ? "Center (shell 0)"
-        : `Shell ${shell}`
+        ? "Center"
+        : String(shell)
       : dist === 0
         ? "Center"
-        : `Ring ${Math.round(dist / ui.radius)}`;
+        : String(Math.round(dist / ui.radius));
   const color = resolveSphereColor(ui.sphereColors, center?.id ?? sel.id).hex;
 
   info.innerHTML = `
@@ -652,7 +652,7 @@ function updateSphereInfo() {
         <span>Index</span><strong>${idx >= 0 ? idx : "—"}</strong>
         <span>ID</span><strong class="meas-mono">${sel.id}</strong>
         <span>Coordinates</span><strong class="meas-mono">${pt ? `(${pt.x.toFixed(2)}, ${pt.y.toFixed(2)}, ${pt.z.toFixed(2)})` : "—"}</strong>
-        <span>${shell != null ? "Shell" : "Ring"}</span><strong>${ring}</strong>
+        <span>${shell != null ? "Shell" : "Ring"}</span><strong>${shellOrRingValue}</strong>
         <span>Color</span><strong class="meas-mono">${color}</strong>
       </div>
     </div>
@@ -940,7 +940,8 @@ function updateXYZAxes() {
 
   if (Math.abs(nextLength - xyzAxesLength) > 1e-6) {
     while (xyzAxesRoot.children.length) {
-      const child = xyzAxesRoot.children.pop();
+      const child = xyzAxesRoot.children[0];
+      xyzAxesRoot.remove(child);
       child.geometry?.dispose?.();
       child.material?.dispose?.();
     }
@@ -970,7 +971,10 @@ function updateXYZAxes() {
     xyzAxesLength = nextLength;
   }
 
-  xyzAxesRoot.visible = ui.showXYZAxes;
+  const hideWorld =
+    ui.renderMode === "constructionPlane" || ui.constructionMode || ui.evolutionMode;
+  xyzAxesRoot.visible = ui.showXYZAxes && !hideWorld;
+  canvas.dataset.xyzAxesVisible = xyzAxesRoot.visible ? "1" : "0";
 }
 
 function syncWorldDecor() {
