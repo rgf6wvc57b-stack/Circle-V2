@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  />
+
+  <title>Circle</title>
+
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/circle-icon.png" />
+
+  <meta name="theme-color" content="#08131f" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta
+    name="apple-mobile-web-app-status-bar-style"
+    content="black-translucent"
+  />
+  <meta name="apple-mobile-web-app-title" content="Circle" />
+
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app" data-sheet-state="half">
+      <canvas id="viewport"></canvas>
+      <div id="measurementHud" class="measurement-hud" hidden></div>
+      <div id="focusHud" class="focus-hud" hidden></div>
+      <div id="inspectorHud" class="measurement-hud inspector-hud" hidden></div>
+
+      <div id="introOverlay" class="intro-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="introTitle">
+        <div class="intro-panel">
+          <header class="intro-header">
+            <h2 id="introTitle">Welcome to Circlel</h2>
+            <button type="button" id="introClose" class="panel-close" aria-label="Close introduction">&times;</button>
+          </header>
+          <div class="intro-body">
+            <p>Explore sacred geometry in 3D — switch shapes, step through constructions, and adjust colors while the mathematics stay exact.</p>
+            <ul>
+              <li>Use <strong>Geometry</strong> to choose a figure (Vesica is the default).</li>
+              <li>Use <strong>Renderer</strong> to change how spheres, circles, and lines appear.</li>
+              <li>Open <strong>Construction Mode</strong> to reveal a figure step by step.</li>
+              <li>Hide the control panel with the compact <strong>Menu</strong> button (upper left).</li>
+            </ul>
+            <section class="control-group row intro-pref-row">
+              <label for="showIntroOnOpenDialog">Show introduction when the app opens</label>
+              <input id="showIntroOnOpenDialog" type="checkbox" data-intro-pref checked />
+            </section>
+          </div>
+          <footer class="intro-footer">
+            <button type="button" id="introDone" class="intro-primary">Got it</button>
+          </footer>
+        </div>
+      </div>
+
+      <div id="tutorialLayer" class="tutorial-layer" hidden>
+        <div id="tutorialHighlight" class="tutorial-highlight" hidden aria-hidden="true"></div>
+        <div id="tutorialPointer" class="tutorial-pointer" hidden aria-hidden="true">
+          <span class="tutorial-pointer-shaft"></span>
+          <span class="tutorial-pointer-head" aria-hidden="true"></span>
+        </div>
+        <aside id="tutorialCard" class="tutorial-card" hidden role="region" aria-labelledby="tutorialTitle">
+          <header class="tutorial-card-header">
+            <div class="tutorial-card-heading">
+              <p id="tutorialProgress" class="tutorial-progress">Step 1 of 5</p>
+              <h2 id="tutorialTitle">Tutorial</h2>
+            </div>
+            <button type="button" id="tutorialClose" class="panel-close" aria-label="Close tutorial">&times;</button>
+          </header>
+          <p id="tutorialInstruction" class="tutorial-instruction"></p>
+          <p id="tutorialSupport" class="tutorial-support hint"></p>
+          <div id="tutorialReport" class="tutorial-report" hidden></div>
+          <div class="tutorial-actions" data-tutorial-actions="guide">
+            <button type="button" id="tutorialBack" class="secondary">Back</button>
+            <button type="button" id="tutorialSkip" class="secondary">Skip Tutorial</button>
+          </div>
+          <div class="tutorial-actions" data-tutorial-actions="complete" hidden>
+            <button type="button" id="tutorialReplay" class="secondary">Replay Construction</button>
+            <button type="button" id="tutorialExplore" class="secondary">Explore Additional Features</button>
+            <button type="button" id="tutorialFinish" class="intro-primary">Finish Tutorial</button>
+          </div>
+        </aside>
+        <div id="tutorialLive" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+      </div>
+
+      <button type="button" id="menuToggle" class="menu-toggle" aria-controls="panel" aria-expanded="true" aria-label="Hide controls" title="Hide controls">
+        <span class="menu-toggle-bars" aria-hidden="true"></span>
+        <span class="menu-toggle-label">Menu</span>
+      </button>
+
+      <aside id="panel" aria-label="Control panel" data-sheet-state="half">
+        <div id="sheetHandle" class="sheet-handle" role="slider" aria-label="Resize control panel" aria-valuemin="0" aria-valuemax="2" aria-valuenow="1" tabindex="0">
+          <button type="button" id="sheetCollapseBtn" class="sheet-handle-btn" aria-label="Collapse panel">&minus;</button>
+          <span class="sheet-grip" aria-hidden="true"></span>
+          <button type="button" id="sheetExpandBtn" class="sheet-handle-btn" aria-label="Expand panel">&plus;</button>
+        </div>
+        <header class="panel-header">
+          <div class="panel-header-text">
+            <h1>Circle</h1>
+            <p>Shape &middot; construct &middot; export</p>
+          </div>
+          <button type="button" id="panelClose" class="panel-close" aria-label="Hide controls" title="Hide controls">&times;</button>
+        </header>
+
+        <section class="control-group">
+          <label for="geometry">Geometry</label>
+          <select id="geometry"></select>
+        </section>
+
+        <section class="control-group">
+          <span class="control-label" id="rendererLabel">Renderer</span>
+          <div class="renderer-multiselect" id="rendererMultiselect">
+            <button type="button" id="rendererSummary" class="renderer-summary" aria-haspopup="true" aria-expanded="false" aria-controls="rendererPopover" aria-labelledby="rendererLabel">Solid Spheres</button>
+            <div class="renderer-popover" id="rendererPopover" role="group" aria-label="Renderer layers" hidden>
+              <label class="renderer-layer-row">
+                <input type="checkbox" data-render-layer="spheres" /><span>Solid Spheres</span>
+              </label>
+              <label class="renderer-layer-row">
+                <input type="checkbox" data-render-layer="circles" /><span>Circle Outlines</span>
+              </label>
+              <label class="renderer-layer-row">
+                <input type="checkbox" data-render-layer="points" /><span>Point Markers</span>
+              </label>
+              <label class="renderer-layer-row">
+                <input type="checkbox" data-render-layer="connections" /><span>Connection Lines</span>
+              </label>
+              <label class="renderer-layer-row renderer-all-row">
+                <input type="checkbox" id="rendererSelectAll" /><span>All Layers</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="renderer-appearance" id="rendererAppearance" aria-label="Renderer appearance">
+            <div class="renderer-style-block" data-style-for="spheres">
+              <p class="renderer-style-title">Solid Spheres</p>
+              <div class="renderer-style-row">
+                <label for="layerColor-spheres">Color</label>
+                <input id="layerColor-spheres" class="touch-color" type="color" value="#FFD84D" data-layer-style="spheres" data-style-prop="color" />
+              </div>
+              <div class="renderer-style-row">
+                <label for="layerOpacity-spheres">Opacity <span id="layerOpacityValue-spheres">45%</span></label>
+                <input id="layerOpacity-spheres" class="touch-range" type="range" min="0" max="100" step="1" value="45" data-layer-style="spheres" data-style-prop="opacity" />
+              </div>
+            </div>
+
+            <div class="renderer-style-block" data-style-for="circles" hidden>
+              <p class="renderer-style-title">Circle Outlines</p>
+              <div class="renderer-style-row">
+                <label for="layerColor-circles">Color</label>
+                <input id="layerColor-circles" class="touch-color" type="color" value="#7FD6FF" data-layer-style="circles" data-style-prop="color" />
+              </div>
+              <div class="renderer-style-row">
+                <label for="layerOpacity-circles">Opacity <span id="layerOpacityValue-circles">90%</span></label>
+                <input id="layerOpacity-circles" class="touch-range" type="range" min="0" max="100" step="1" value="90" data-layer-style="circles" data-style-prop="opacity" />
+              </div>
+              <div class="renderer-style-row">
+                <label for="layerThickness-circles">Thickness <span id="layerThicknessValue-circles">1.00</span></label>
+                <input id="layerThickness-circles" class="touch-range" type="range" min="0.3" max="2.5" step="0.05" value="1" data-layer-style="circles" data-style-prop="thickness" />
+              </div>
+            </div>
+
+            <div class="renderer-style-block" data-style-for="points" hidden>
+              <p class="renderer-style-title">Point Markers</p>
+              <div class="renderer-style-row">
+                <label for="layerColor-points">Color</label>
+                <input id="layerColor-points" class="touch-color" type="color" value="#FFD166" data-layer-style="points" data-style-prop="color" />
+              </div>
+              <div class="renderer-style-row">
+                <label for="layerOpacity-points">Opacity <span id="layerOpacityValue-points">100%</span></label>
+                <input id="layerOpacity-points" class="touch-range" type="range" min="0" max="100" step="1" value="100" data-layer-style="points" data-style-prop="opacity" />
+              </div>
+              <div class="renderer-style-row">
+                <label for="layerSize-points">Size <span id="layerSizeValue-points">1.00</span></label>
+                <input id="layerSize-points" class="touch-range" type="range" min="0.3" max="2.5" step="0.05" value="1" data-layer-style="points" data-style-prop="size" />
+              </div>
+            </div>
+
+            <div class="renderer-style-block" data-style-for="connections" hidden>
+              <p class="renderer-style-title">Connection Lines</p>
+              <div class="renderer-style-row">
+                <label for="layerColor-connections">Color</label>
+                <input id="layerColor-connections" class="touch-color" type="color" value="#7AE7C7" data-layer-style="connections" data-style-prop="color" />
+              </div>
+              <div class="renderer-style-row">
+                <label for="layerOpacity-connections">Opacity <span id="layerOpacityValue-connections">90%</span></label>
+                <input id="layerOpacity-connections" class="touch-range" type="range" min="0" max="100" step="1" value="90" data-layer-style="connections" data-style-prop="opacity" />
+              </div>
+              <div class="renderer-style-row">
+                <label for="layerThickness-connections">Thickness <span id="layerThicknessValue-connections">1.00</span></label>
+                <input id="layerThickness-connections" class="touch-range" type="range" min="0.3" max="2.5" step="0.05" value="1" data-layer-style="connections" data-style-prop="thickness" />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="control-group" id="treeViewModeGroup" hidden>
+          <label for="treeViewMode">Tree viewing mode</label>
+          <select id="treeViewMode">
+            <option value="traditional" selected>Traditional</option>
+            <option value="spatial">Spatial</option>
+            <option value="geometric">Geometric</option>
+          </select>
+          <p class="hint" id="treeViewHint">Traditional: complete Kabbalistic diagram — 10 Sephirot and 22 paths in one plane.</p>
+        </section>
+
+        <section class="control-group" id="endlessControls" hidden>
+          <p class="renderer-style-title">Endless expansion</p>
+          <p class="hint" id="endlessHint">Continues the Flower of Life lattice outward, ring by ring.</p>
+          <label for="endlessRings">Expansion Ring Count <span id="endlessRingsValue">4</span></label>
+          <input id="endlessRings" class="touch-range" type="range" min="1" max="8" step="1" value="4" />
+          <label for="endlessExpansionStep">Expansion Step <span id="endlessExpansionStepValue">4</span></label>
+          <input id="endlessExpansionStep" class="touch-range" type="range" min="1" max="8" step="1" value="4" />
+          <div class="control-group row" style="margin-bottom: 0">
+            <label for="endlessAutoExpand">Auto Expand</label>
+            <input id="endlessAutoExpand" type="checkbox" />
+          </div>
+          <button type="button" id="endlessReset">Reset Expansion</button>
+        </section>
+
+        <section class="control-group">
+          <label for="radius">Sphere radius <span id="radiusValue">1.20</span></label>
+          <input id="radius" type="range" min="0.4" max="3" step="0.05" value="1.2" />
+        </section>
+
+        <section class="control-group">
+          <label for="pathThickness">Path thickness <span id="pathThicknessValue">1.00</span></label>
+          <input id="pathThickness" type="range" min="0.3" max="2.5" step="0.05" value="1" />
+        </section>
+
+        <section class="control-group row">
+          <label for="evolutionMode">Evolution Mode</label>
+          <input id="evolutionMode" type="checkbox" />
+        </section>
+
+        <section id="evolutionPlayback" class="construction-playback" hidden>
+          <div class="step-display" aria-live="polite">Evolution <strong><span id="evoStepCurrent">0</span> / <span id="evoStepTotal">11</span></strong></div>
+          <p class="evo-title" id="evoTitle">Empty Space</p>
+          <p class="hint" id="evoDescription">The beginning — no points, no measures.</p>
+          <input id="evoSlider" type="range" min="0" max="11" step="1" value="0" />
+          <div class="playback-controls">
+            <button type="button" id="evoStepBack" title="Previous step">Step Back</button>
+            <button type="button" id="evoStepForward" title="Next step">Step Forward</button>
+            <button type="button" id="evoRestart" title="Restart">Restart</button>
+          </div>
+        </section>
+
+        <section class="control-group row">
+          <label for="constructionMode">Construction Mode</label>
+          <input id="constructionMode" type="checkbox" />
+        </section>
+
+        <section id="constructionPlayback" class="construction-playback" hidden>
+          <div class="step-display" aria-live="polite">Construction Step <strong><span id="stepCurrent">1</span> / <span id="stepTotal">7</span></strong></div>
+          <section class="control-group" id="constructionStepGroup">
+            <label for="constructionStepSlider">Construction Step bas <span id="constructionStepSliderValue">1</span></label>
+            <input id="constructionStepSlider" type="range" min="1" max="7" step="1" value="1" />
+          </section>
+          <div class="playback-controls">
+            <button type="button" id="btnPlay" title="Play">Play</button>
+            <button type="button" id="btnPause" title="Pause">Pause</button>
+            <button type="button" id="btnStepBack" title="Step Back">Step Back</button>
+            <button type="button" id="btnStepForward" title="Step Forward">Step Forward</button>
+            <button type="button" id="btnRestart" title="Restart">Restart</button>
+          </div>
+          <section class="control-group row">
+            <label for="autoPlay">Auto Play</label>
+            <input id="autoPlay" type="checkbox" />
+          </section>
+        </section>
+
+        <section id="legacyStepGroup" class="control-group">
+          <label for="layers">Construction Step <span id="layersValue">1</span></label>
+          <input id="layers" type="range" min="1" max="7" step="1" value="1" />
+        </section>
+
+        <section class="panel-section sphere-colors" id="sphereColorsSection">
+          <h2>Sphere Colors</h2>
+          <section class="control-group">
+            <label for="sphereColorMode">Color mode</label>
+            <select id="sphereColorMode">
+              <option value="global" selected>One color for all spheres</option>
+              <option value="individual">Individual sphere colors</option>
+            </select>
+          </section>
+          <div class="preset-row" id="colorPatternRow">
+            <button type="button" id="colorPatternRainbow">Rainbow</button>
+            <button type="button" id="colorPatternAlternating">Alternating</button>
+            <button type="button" id="colorPatternRandom">Random</button>
+            <button type="button" id="colorPatternRing">By Ring</button>
+          </div>
+          <section id="globalColorControls" class="color-block">
+            <section class="control-group">
+              <label for="globalSphereColor">Global color</label>
+              <input id="globalSphereColor" type="color" value="#ffd84d" class="touch-color" />
+            </section>
+            <section class="control-group">
+              <label for="globalSphereOpacity">Opacity <span id="globalSphereOpacityValue">45%</span></label>
+              <input id="globalSphereOpacity" type="range" min="0" max="100" step="1" value="45" class="touch-range" />
+              <input id="globalSphereOpacityNum" type="number" min="0" max="100" step="1" value="45" class="opacity-num" aria-label="Global opacity percent" />
+            </section>
+            <div class="preset-row">
+              <button type="button" data-opacity-preset="solid" data-target="global">Solid</button>
+              <button type="button" data-opacity-preset="transparent" data-target="global">Transparent</button>
+            </div>
+          </section>
+          <section id="individualColorControls" class="color-block" hidden>
+            <p class="hint" id="selectedSphereLabel">Tap a sphere to select it</p>
+            <section class="control-group">
+              <label for="individualSphereColor">Selected sphere color</label>
+              <input id="individualSphereColor" type="color" value="#ffd84d" class="touch-color" />
+            </section>
+            <section class="control-group">
+              <label for="individualSphereOpacity">Opacity <span id="individualSphereOpacityValue">45%</span></label>
+              <input id="individualSphereOpacity" type="range" min="0" max="100" step="1" value="45" class="touch-range" />
+              <input id="individualSphereOpacityNum" type="number" min="0" max="100" step="1" value="45" class="opacity-num" aria-label="Individual opacity percent" />
+            </section>
+            <div class="preset-row">
+              <button type="button" data-opacity-preset="solid" data-target="individual">Solid</button>
+              <button type="button" data-opacity-preset="transparent" data-target="individual">Transparent</button>
+            </div>
+            <div class="preset-row">
+              <button type="button" id="copySphereColor">Copy color</button>
+              <button type="button" id="pasteSphereColor">Paste color</button>
+            </div>
+            <div class="preset-row">
+              <button type="button" id="resetSphereColor">Reset sphere color</button>
+              <button type="button" id="resetAllSphereColors">Reset all colors</button>
+            </div>
+          </section>
+        </section>
+
+        <section class="control-group">
+          <label for="palette">Palette (legacy accents)</label>
+          <select id="palette">
+            <option value="ocean" selected>Ocean</option>
+            <option value="spectrum">Spectrum</option>
+            <option value="goldAndViolet">Gold and Violet</option>
+            <option value="monochrome">Monochrome</option>
+          </select>
+        </section>
+
+        <section class="control-group">
+          <label for="colorIntensity">Color Intensity <span id="colorIntensityValue">1.00</span></label>
+          <input id="colorIntensity" type="range" min="0.2" max="1.8" step="0.05" value="1" />
+        </section>
+
+        <section class="control-group">
+          <label for="blendStrength">Blend Strength <span id="blendStrengthValue">1.00</span></label>
+          <input id="blendStrength" type="range" min="0.2" max="1.8" step="0.05" value="1" />
+        </section>
+
+        <section class="control-group row">
+          <label for="wireframe">Wireframe</label>
+          <input id="wireframe" type="checkbox" />
+        </section>
+
+        <section class="control-group">
+          <label for="material">Material</label>
+          <select id="material">
+            <option value="standard" selected>Standard</option>
+            <option value="phong">Phong</option>
+            <option value="lambert">Lambert</option>
+            <option value="physical">Physical</option>
+            <option value="basic">Basic</option>
+            <option value="normal">Normal</option>
+          </select>
+        </section>
+
+        <section class="control-group">
+          <label for="renderingPreset">Rendering Preset</label>
+          <select id="renderingPreset">
+            <option value="custom" selected>Custom</option>
+            <option value="watercolor">Watercolor</option>
+            <option value="frostedGlass">Frosted Glass</option>
+            <option value="clearGlass">Clear Glass</option>
+            <option value="solid">Solid</option>
+            <option value="wireframe">Wireframe</option>
+            <option value="softGlow">Soft Glow</option>
+          </select>
+        </section>
+
+        <section class="panel-section" id="sphereInfoSection">
+          <h2>Sphere Info</h2>
+          <div id="sphereInfoPanel" hidden>
+            <p class="hint">Select a sphere to see details</p>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2>Camera</h2>
+          <section class="control-group">
+            <label for="cameraProjection">Projection</label>
+            <select id="cameraProjection">
+              <option value="perspective" selected>Perspective</option>
+              <option value="orthographic">Orthographic</option>
+            </select>
+          </section>
+          <div class="preset-grid" id="viewPresets">
+            <button type="button" data-preset="front">Front</button>
+            <button type="button" data-preset="top">Top</button>
+            <button type="button" data-preset="side">Side</button>
+            <button type="button" data-preset="reset">Reset</button>
+          </div>
+          <section class="control-group row">
+            <label for="autoRotate">Auto-Rotate</label>
+            <input id="autoRotate" type="checkbox" />
+          </section>
+          <section class="control-group">
+            <label for="autoRotateSpeed">Rotation Speed <span id="autoRotateSpeedValue">1.00</span></label>
+            <input id="autoRotateSpeed" type="range" min="0.1" max="5" step="0.1" value="1" />
+          </section>
+        </section>
+
+        <section class="panel-section">
+          <h2>Environment</h2>
+          <section class="control-group">
+            <label for="environmentPreset">Environment Preset</label>
+            <select id="environmentPreset">
+              <option value="darkSpace">Dark Space</option>
+              <option value="neutralStudio">Neutral Studio</option>
+              <option value="softWhite">Soft White</option>
+              <option value="transparent">Transparent</option>
+            </select>
+          </section>
+          <section class="control-group">
+            <label for="backgroundColor">Background Color</label>
+            <input id="backgroundColor" type="color" value="#0e1a24" class="touch-color" />
+          </section>
+          <section class="control-group row">
+            <label for="transparentBackground">Transparent Background</label>
+            <input id="transparentBackground" type="checkbox" />
+          </section>
+          <section class="control-group">
+            <label for="lightingIntensity">Lighting Intensity <span id="lightingIntensityValue">1.00</span></label>
+            <input id="lightingIntensity" type="range" min="0.2" max="2" step="0.05" value="1" />
+          </section>
+        </section>
+
+        <section class="panel-section collapsible" id="inspectorPanel">
+          <header class="panel-section-header">
+            <h2>Inspector</h2>
+            <button type="button" id="inspectorToggle" class="panel-section-toggle" aria-expanded="true" aria-label="Toggle inspector panel">&minus;</button>
+          </header>
+          <div class="panel-section-body">
+            <section class="control-group row">
+              <label for="inspectMode">Inspect Mode</label>
+              <input id="inspectMode" type="checkbox" />
+            </section>
+            <section class="control-group row">
+              <label for="showGraph">Show Graph</label>
+              <input id="showGraph" type="checkbox" />
+            </section>
+          </div>
+        </section>
+
+        <section class="panel-section collapsible" id="discoveriesPanel">
+          <header class="panel-section-header">
+            <h2>Discoveries</h2>
+            <button type="button" id="discoveriesToggle" class="panel-section-toggle" aria-expanded="true" aria-label="Toggle discoveries panel">&minus;</button>
+          </header>
+          <div class="panel-section-body">
+            <section class="control-group row">
+              <label for="measurementMode">Measurement Mode</label>
+              <input id="measurementMode" type="checkbox" />
+            </section>
+          </div>
+        </section>
+
+        <section class="panel-section collapsible" id="mathematicsPanel">
+          <header class="panel-section-header">
+            <h2>Mathematics</h2>
+            <button type="button" id="mathematicsToggle" class="panel-section-toggle" aria-expanded="true" aria-label="Toggle mathematics panel">&minus;</button>
+          </header>
+          <div class="panel-section-body">
+            <p class="hint">Select a sphere in Inspect Mode to see mathematical properties.</p>
+          </div>
+        </section>
+
+        <section class="actions">
+          <button type="button" id="exportObj">Export OBJ</button>
+          <button type="button" id="exportGlb">Export GLB</button>
+          <button type="button" id="screenshot">Screenshot PNG</button>
+          <button type="button" id="exportTransparentPng">Transparent PNG</button>
+          <button type="button" id="resetView" class="secondary">Reset View</button>
+          <button type="button" id="resetControls" class="secondary">Reset Controls</button>
+          <button type="button" id="resetAll" class="secondary">Reset All</button>
+        </section>
+
+        <section class="control-group row">
+          <label for="animSpeed">Animation Speed <span id="animSpeedValue">0.00</span></label>
+          <input id="animSpeed" type="range" min="0" max="3" step="0.1" value="0" />
+        </section>
+      </aside>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

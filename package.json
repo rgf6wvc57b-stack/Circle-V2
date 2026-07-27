@@ -1,0 +1,38 @@
+{
+  "name": "geometry-explor",
+  "version": "1.0.0",
+  "description": "3D Geometry Explorer",
+  "type": "module",
+  "homepage": "https://rgf6wvc57b-stack.github.io/Circle/",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 5173",
+    "test:flower": "node scripts/verify-canonical-flower.mjs",
+    "test:framing": "node scripts/verify-available-view-rect.mjs",
+    "test:framing-calm": "node scripts/verify-calm-framing.mjs",
+    "test:framing-screen": "node scripts/verify-sphere-screen-framing.mjs",
+    "test:intro": "node scripts/verify-intro-preference.mjs",
+    "test:tutorial": "node scripts/verify-guided-tutorial.mjs",
+    "test:tutorial-mobile": "node scripts/verify-mobile-tutorial.mjs",
+    "test:construction-plane": "node scripts/verify-construction-plane-hidden.mjs",
+    "test:render-layers": "node scripts/verify-render-layers.mjs",
+    "test:render-layer-styles": "node scripts/verify-render-layer-styles.mjs",
+    "test:renderer-dropdown": "node scripts/verify-renderer-dropdown-opaque.mjs",
+    "test:endless": "node scripts/verify-endless-geometry.mjs",
+    "test:ui-cleanup": "node scripts/verify-hidden-ui.mjs",
+    "test:dark-bg": "node scripts/verify-dark-background.mjs",
+    "test:menu": "node scripts/verify-menu-toggle.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rgf6wvc57b-stack/Circle.git"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "three": "^0.178.0"
+  },
+  "devDependencies": {
+    "vite": "^7.0.0"
+  }
+}
