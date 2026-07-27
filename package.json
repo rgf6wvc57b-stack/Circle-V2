@@ -31,6 +31,9 @@
     "url": "git+https://github.com/rgf6wvc57b-stack/Circle.git"
   },
   "license": "ISC",
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "three": "^0.178.0"
   },
