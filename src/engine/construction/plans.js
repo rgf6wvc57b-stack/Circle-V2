@@ -15,6 +15,7 @@ const BUILDERS = {
   point: (r) => planFromGenerator("point", r),
   circle: (r) => planFromGenerator("circle", r),
   sphere: (r) => planFromGenerator("sphere", r),
+  concentricShells: (r, opts = {}) => planFromGenerator("concentricShells", r, opts),
   vesicaPiscis: (r) => planFromGenerator("vesicaPiscis", r),
   seedOfLife: buildSeedOfLifeConstructionPlan,
   flowerOfLife: buildFlowerOfLifeConstructionPlan,
@@ -44,7 +45,11 @@ export function buildConstructionPlan(geometryId, radius, opts = {}) {
   if (!fn) {
     throw new Error(`No construction plan for geometry: ${geometryId}`);
   }
-  if (geometryId === "treeOfLife" || geometryId === "endless") {
+  if (
+    geometryId === "treeOfLife" ||
+    geometryId === "endless" ||
+    geometryId === "concentricShells"
+  ) {
     return fn(radius, opts);
   }
   return fn(radius);

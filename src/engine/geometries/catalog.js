@@ -54,6 +54,14 @@ export const GEOMETRY_CATALOG = Object.freeze([
     showInGeometryMenu: true,
   },
   {
+    id: "concentricShells",
+    label: "3D Concentric Shells",
+    complexity: 36,
+    defaultRenderer: "spheres",
+    sphereBased: true,
+    showInGeometryMenu: true,
+  },
+  {
     id: "twoIntersectingSpheres",
     label: "Two Intersecting Spheres",
     complexity: 38,
