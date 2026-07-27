@@ -38,7 +38,7 @@ function coordinateToken(value) {
 }
 
 /**
- * Generate the center sphere plus complete 3D center-distance shells.
+ * Generate the center sphere plus complete cubic-lattice distance shells.
  *
  * Shell membership is mathematical: integer lattice coordinates (x,y,z) in
  * {-1,0,1} have shell index x²+y²+z². With center spacing 2r, every member of
@@ -56,7 +56,7 @@ export function generateConcentricShells(radius, opts = {}) {
   );
   const data = createEmptyConstruction(
     "concentricShells",
-    "3D Concentric Shells",
+    "3D Cubic Sphere Lattice",
     radius
   );
   const centerSpacing = radius * 2;

@@ -1,5 +1,5 @@
 /**
- * True 3D concentric-shell geometry verification.
+ * 3D cubic sphere lattice geometry verification.
  * Run: node scripts/verify-concentric-shells.mjs
  */
 import { readFileSync } from "node:fs";
@@ -144,7 +144,12 @@ for (let shellCount = 0; shellCount <= 3; shellCount += 1) {
 // Registry, construction engine, UI controls, and camera policy integration.
 {
   const menu = listGeometryOptions().map((item) => item.id);
-  assert(menu.includes("concentricShells"), "3D Concentric Shells appears in geometry menu");
+  assert(menu.includes("concentricShells"), "3D Cubic Sphere Lattice appears in geometry menu");
+  const catalog = readFileSync(join(root, "src/engine/geometries/catalog.js"), "utf8");
+  assert(
+    /label:\s*"3D Cubic Sphere Lattice"/.test(catalog),
+    "geometry catalog uses the cubic sphere lattice label"
+  );
   const generated = generateGeometry("concentricShells", radius, {
     shellCount: 2,
     explodeShells: 0,
@@ -222,7 +227,7 @@ for (let shellCount = 0; shellCount <= 3; shellCount += 1) {
   );
   assert(
     /ui\.geometry === "concentricShells"[\s\S]*?box\.min\.set\(-maxAbs/.test(main),
-    "concentric fit bounds are symmetrized on world origin"
+    "cubic lattice fit bounds are symmetrized on world origin"
   );
 }
 
@@ -262,8 +267,8 @@ for (let shellCount = 0; shellCount <= 3; shellCount += 1) {
 }
 
 if (failed > 0) {
-  console.error(`\n${failed} concentric-shell assertion(s) failed`);
+  console.error(`\n${failed} cubic sphere lattice assertion(s) failed`);
   process.exit(1);
 }
 
-console.log("\nAll 3D concentric-shell checks passed.");
+console.log("\nAll 3D cubic sphere lattice checks passed.");

@@ -151,7 +151,7 @@ const ui = {
   /** Endless geometry: currently visible rings (1..endlessRings). */
   endlessExpansionStep: ENDLESS_DEFAULT_RINGS,
   endlessAutoExpand: false,
-  /** 3D concentric-shell geometry: complete center-distance shells 0..3. */
+  /** 3D cubic sphere lattice: complete distance shells 0..3 on a 3×3×3 center grid. */
   concentricShellCount: CONCENTRIC_SHELL_DEFAULT,
   /** Radial shell separation multiplier; zero preserves canonical positions. */
   explodeShells: EXPLODE_SHELLS_DEFAULT,
@@ -405,7 +405,7 @@ function syncSphereColorUI() {
   document.getElementById("sphereColorMode").value = mode;
   document.getElementById("globalColorControls").hidden = mode !== COLOR_MODE.GLOBAL;
   document.getElementById("individualColorControls").hidden = mode !== COLOR_MODE.INDIVIDUAL;
-  // Concentric shells always orbit the world origin, even when a sphere is selected.
+  // Cubic sphere lattice always orbits the world origin, even when a sphere is selected.
   focusSystem.setSelectOnly(
     mode === COLOR_MODE.INDIVIDUAL || ui.geometry === "concentricShells"
   );
@@ -1470,8 +1470,8 @@ function syncConcentricShellUI() {
   if (explodeValue) explodeValue.textContent = ui.explodeShells.toFixed(2);
   if (hint) {
     hint.textContent =
-      `Showing shells 0–${ui.concentricShellCount}: ` +
-      `${concentricSphereCount(ui.concentricShellCount)} spheres, centered at (0,0,0).`;
+      `3×3×3 cubic lattice; showing distance shells 0–${ui.concentricShellCount}: ` +
+      `${concentricSphereCount(ui.concentricShellCount)} sphere centers at (0,0,0).`;
   }
 }
 

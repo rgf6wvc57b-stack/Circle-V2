@@ -55,7 +55,7 @@ export const GEOMETRY_CATALOG = Object.freeze([
   },
   {
     id: "concentricShells",
-    label: "3D Concentric Shells",
+    label: "3D Cubic Sphere Lattice",
     complexity: 36,
     defaultRenderer: "spheres",
     sphereBased: true,

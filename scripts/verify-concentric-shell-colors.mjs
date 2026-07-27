@@ -1,5 +1,5 @@
 /**
- * Browser-level shell color selection, override, info, and reset checks.
+ * Browser-level cubic sphere lattice color selection, override, info, and reset checks.
  * Run: node scripts/verify-concentric-shell-colors.mjs
  */
 import { createRequire } from "node:module";
@@ -328,4 +328,4 @@ if (failed > 0) {
   process.exit(1);
 }
 
-console.log("\nAll concentric-shell color UI checks passed.");
+console.log("\nAll cubic sphere lattice color UI checks passed.");
