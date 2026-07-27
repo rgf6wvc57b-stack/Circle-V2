@@ -179,6 +179,35 @@ try {
     resetState.info.includes(shellDefault),
     "individual reset restores the shell default in sphere info"
   );
+
+  const globalOverride = "#abcdef";
+  await page.select("#sphereColorMode", "global");
+  await page.$eval(
+    "#globalSphereColor",
+    (element, color) => {
+      element.value = color;
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    globalOverride
+  );
+  await sleep(150);
+  const globalInfo = await page.$eval(
+    "#sphereInfoPanel",
+    (element) => element.textContent.toLowerCase()
+  );
+  assert(globalInfo.includes(globalOverride), "global mode still controls sphere info color");
+
+  await page.select("#sphereColorMode", "individual");
+  await sleep(150);
+  const restoredIndividual = await page.evaluate(() => ({
+    controlColor: document.getElementById("individualSphereColor").value.toLowerCase(),
+    info: document.getElementById("sphereInfoPanel").textContent.toLowerCase(),
+  }));
+  assert(
+    restoredIndividual.controlColor === shellDefault &&
+      restoredIndividual.info.includes(shellDefault),
+    "returning to individual mode preserves the shell default"
+  );
   assert(runtimeErrors.length === 0, "browser test has no runtime errors", runtimeErrors[0]);
 
   await browser.close();
