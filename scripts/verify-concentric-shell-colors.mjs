@@ -81,8 +81,15 @@ async function selectVisibleShellSphere(page) {
 
 await run("npm", ["run", "build"]);
 const preview = spawn(
-  "npx",
-  ["vite", "preview", "--host", "127.0.0.1", "--port", port],
+  process.execPath,
+  [
+    join(root, "node_modules/vite/bin/vite.js"),
+    "preview",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    port,
+  ],
   { cwd: root, stdio: ["ignore", "pipe", "pipe"] }
 );
 
@@ -176,7 +183,14 @@ try {
 
   await browser.close();
 } finally {
-  preview.kill("SIGKILL");
+  preview.kill("SIGTERM");
+  if (preview.exitCode == null) {
+    await Promise.race([
+      new Promise((resolve) => preview.once("exit", resolve)),
+      sleep(2000),
+    ]);
+  }
+  if (preview.exitCode == null) preview.kill("SIGKILL");
 }
 
 if (failed > 0) {
