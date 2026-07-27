@@ -176,7 +176,7 @@ for (let shellCount = 0; shellCount <= 3; shellCount += 1) {
   );
   assert(/Show XYZ Axes/.test(html), "Show XYZ Axes toggle is present");
   assert(
-    /axis:\s*"z"/.test(main) && /\[0,\s*0,\s*-nextLength\]/.test(main),
+    /id:\s*"z"[\s\S]*?\[0,\s*0,\s*-nextLength\]/.test(main),
     "Z axis spans forward and backward"
   );
   assert(/enablePan\s*=\s*false/.test(camera), "camera panning remains disabled");
