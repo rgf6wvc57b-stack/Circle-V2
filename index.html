@@ -219,6 +219,15 @@
           <button type="button" id="endlessReset">Reset Expansion</button>
         </section>
 
+        <section class="control-group" id="concentricShellControls" hidden>
+          <p class="renderer-style-title">3D concentric shells</p>
+          <p class="hint" id="concentricShellHint">Complete equal-distance shells centered at world origin.</p>
+          <label for="shellCount">Shell Count <span id="shellCountValue">3</span></label>
+          <input id="shellCount" class="touch-range" type="range" min="0" max="3" step="1" value="3" />
+          <label for="explodeShells">Explode Shells <span id="explodeShellsValue">0.00</span></label>
+          <input id="explodeShells" class="touch-range" type="range" min="0" max="2" step="0.05" value="0" />
+        </section>
+
         <section class="control-group">
           <label for="radius">Sphere radius <span id="radiusValue">1.20</span></label>
           <input id="radius" type="range" min="0.4" max="3" step="0.05" value="1.2" />
@@ -407,6 +416,11 @@
             <label for="autoRotate">Auto-Rotate</label>
             <input id="autoRotate" type="checkbox" />
           </section>
+          <section class="control-group row">
+            <label for="showXYZAxes">Show XYZ Axes</label>
+            <input id="showXYZAxes" type="checkbox" checked />
+          </section>
+          <p class="hint">X = red left/right, Y = green up/down, Z = blue forward/backward.</p>
           <section class="control-group">
             <label for="autoRotateSpeed">Rotation Speed <span id="autoRotateSpeedValue">1.00</span></label>
             <input id="autoRotateSpeed" type="range" min="0.1" max="5" step="0.1" value="1" />
