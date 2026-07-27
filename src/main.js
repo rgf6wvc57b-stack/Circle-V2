@@ -388,6 +388,7 @@ function applySphereColorsToRenderer({ rebuild = false } = {}) {
       sphereColors: ui.sphereColors,
       renderLayerStyles: ui.renderLayerStyles,
     });
+    updateSphereInfo();
     return;
   }
   engine.updateLayerStyles({
@@ -396,6 +397,7 @@ function applySphereColorsToRenderer({ rebuild = false } = {}) {
     pathThickness: ui.pathThickness,
   });
   engine.setSelectedSphereId(ui.sphereColors.selectedSphereId);
+  updateSphereInfo();
 }
 
 function syncSphereColorUI() {
@@ -641,7 +643,7 @@ function updateSphereInfo() {
       : dist === 0
         ? "Center"
         : `Ring ${Math.round(dist / ui.radius)}`;
-  const color = resolveSphereColor(ui.sphereColors, center?.pointId ?? sel.id).hex;
+  const color = resolveSphereColor(ui.sphereColors, center?.id ?? sel.id).hex;
 
   info.innerHTML = `
     <div class="insp-block">
@@ -1425,11 +1427,11 @@ function ensureConcentricShellColors({ activate = false } = {}) {
 
   const data = engine.getFullData();
   data?.sphereCenters?.forEach((spec) => {
-    if (ui.sphereColors.bySphereId[spec.pointId]) return;
+    if (ui.sphereColors.bySphereId[spec.id]) return;
     const shell = spec.meta?.shell ?? 0;
     setIndividualColor(
       ui.sphereColors,
-      spec.pointId,
+      spec.id,
       spec.meta?.shellColor ?? CONCENTRIC_SHELL_COLORS[shell],
       ui.sphereColors.global.opacity
     );
@@ -2086,12 +2088,14 @@ function bindControls() {
   });
   document.getElementById("resetSphereColor").addEventListener("click", () => {
     resetSphereColor(ui.sphereColors, ui.sphereColors.selectedSphereId);
+    ensureConcentricShellColors();
     syncSphereColorUI();
     applySphereColorsToRenderer();
     saveState();
   });
   document.getElementById("resetAllSphereColors").addEventListener("click", () => {
     resetAllIndividualColors(ui.sphereColors);
+    ensureConcentricShellColors();
     syncSphereColorUI();
     applySphereColorsToRenderer();
     saveState();
@@ -2421,7 +2425,7 @@ focusSystem.onChange = (sel) => {
     updateSphereInfo();
     return;
   }
-  const id = sel.pointId ?? sel.mesh?.userData?.specId ?? null;
+  const id = sel.mesh?.userData?.specId ?? sel.pointId ?? null;
   ui.sphereColors.selectedSphereId = id;
   engine.setSelectedSphereId(id);
   

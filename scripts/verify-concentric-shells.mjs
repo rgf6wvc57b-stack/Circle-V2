@@ -176,6 +176,23 @@ for (let shellCount = 0; shellCount <= 3; shellCount += 1) {
   );
   assert(/Show XYZ Axes/.test(html), "Show XYZ Axes toggle is present");
   assert(
+    /bySphereId\[spec\.id\]/.test(main) &&
+      /setIndividualColor\([\s\S]*?ui\.sphereColors,[\s\S]*?spec\.id,/.test(main),
+    "shell defaults are keyed by sphere center id"
+  );
+  assert(
+    /resolveSphereColor\(ui\.sphereColors,\s*center\?\.id\s*\?\?\s*sel\.id\)/.test(main),
+    "sphere info resolves color by sphere center id"
+  );
+  assert(
+    /const id = sel\.mesh\?\.userData\?\.specId \?\? sel\.pointId/.test(main),
+    "shell selection prefers the sphere center id"
+  );
+  assert(
+    /resetSphereColor\([\s\S]*?ensureConcentricShellColors\(\)/.test(main),
+    "individual reset reseeds the shell default"
+  );
+  assert(
     /id:\s*"z"[\s\S]*?\[0,\s*0,\s*-nextLength\]/.test(main),
     "Z axis spans forward and backward"
   );
