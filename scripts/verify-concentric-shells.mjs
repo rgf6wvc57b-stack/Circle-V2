@@ -181,6 +181,10 @@ for (let shellCount = 0; shellCount <= 3; shellCount += 1) {
   );
   assert(/enablePan\s*=\s*false/.test(camera), "camera panning remains disabled");
   assert(
+    /maxDistance\s*=\s*450/.test(camera),
+    "camera distance cap accommodates maximum exploded shells"
+  );
+  assert(
     /ui\.geometry === "concentricShells"[\s\S]*?box\.min\.set\(-maxAbs/.test(main),
     "concentric fit bounds are symmetrized on world origin"
   );
