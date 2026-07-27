@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
     "build": "vite build",
-    "preview": "npm run build && wrangler dev",
+    "preview": "vite preview",
+    "preview:worker": "wrangler dev",
     "test:flower": "node scripts/verify-canonical-flower.mjs",
     "test:framing": "node scripts/verify-available-view-rect.mjs",
     "test:framing-calm": "node scripts/verify-calm-framing.mjs",
