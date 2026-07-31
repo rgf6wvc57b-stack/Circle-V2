@@ -78,6 +78,8 @@ import {
   getSheetState,
   bindSheetHandle,
 } from "./app/mobileSheet.js";
+import { StudyController } from "./studies/StudyController.js";
+import { bindStudyControls } from "./app/studyModeUI.js";
 const canvas = document.getElementById("viewport");
 const appRoot = document.getElementById("app");
 
@@ -798,12 +800,42 @@ scene.add(worldGrid);
 const designGroup = new THREE.Group();
 scene.add(designGroup);
 
+const studyGroup = new THREE.Group();
+studyGroup.name = "studyGeometry";
+studyGroup.visible = false;
+scene.add(studyGroup);
+
 /** Exploration overlays stay outside designGroup so exports remain geometry-only. */
 const explorationRoot = new THREE.Group();
 explorationRoot.name = "explorationRoot";
 scene.add(explorationRoot);
 
 const engine = new ConstructionEngine(designGroup);
+
+const studyController = new StudyController({
+  renderer: webgl,
+  scene,
+  cameraController,
+  posterRoot: document.getElementById("studyPosterRoot"),
+  appRoot,
+  panel: document.getElementById("panel"),
+  studyGroup,
+});
+
+function syncStudyVisibility() {
+  const studyOn = studyController.isActive();
+  designGroup.visible = !studyOn;
+  studyGroup.visible = studyOn;
+  if (studyOn) {
+    floor.visible = false;
+    worldGrid.visible = false;
+  } else {
+    const hideWorld =
+      ui.renderMode === "constructionPlane" || ui.constructionMode || ui.evolutionMode;
+    floor.visible = !hideWorld;
+    worldGrid.visible = !hideWorld;
+  }
+}
 const player = engine.player;
 
 const evolution = new EvolutionController({
@@ -885,10 +917,7 @@ function downloadString(text, filename) {
 }
 
 function syncWorldDecor() {
-  const hideWorld =
-    ui.renderMode === "constructionPlane" || ui.constructionMode || ui.evolutionMode;
-  floor.visible = !hideWorld;
-  worldGrid.visible = !hideWorld;
+  syncStudyVisibility();
 }
 
 function syncEvolutionUI() {
@@ -2213,11 +2242,25 @@ function bindControls() {
       ui.panelOpen = getSheetState() !== SHEET_STATE.COLLAPSED;
       if (guidedTutorial?.isActive?.() && isMobileTutorialLayout()) {
         frameTutorialGeometry({ animate: true, duration: 0.45 });
+      } else if (studyController.isActive()) {
+        studyController.frameStudy();
       } else {
         frameActiveConstruction({ animate: true, duration: 0.45 });
       }
       guidedTutorial?.reposition();
     },
+  });
+
+  bindStudyControls(studyController, {
+    onStudyEnter: () => {
+      syncStudyVisibility();
+      studyController.frameStudy();
+    },
+    onStudyExit: () => {
+      syncStudyVisibility();
+      frameActiveConstruction({ animate: false });
+    },
+    syncWorldDecor,
   });
 }
 focusSystem.onChange = (sel) => {
@@ -2306,6 +2349,12 @@ function animate() {
     evolution.update(dt);
   } catch (error) {
     console.error("Evolution update failed:", error);
+  }
+
+  try {
+    studyController.update(dt);
+  } catch (error) {
+    console.error("Study update failed:", error);
   }
 
   try {

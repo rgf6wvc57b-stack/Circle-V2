@@ -22,6 +22,7 @@
   <meta name="apple-mobile-web-app-title" content="Circle" />
 
     <link rel="stylesheet" href="/src/styles.css" />
+    <link rel="stylesheet" href="/src/styles/poster.css" />
   </head>
   <body>
     <div id="app" data-sheet-state="half">
@@ -29,6 +30,8 @@
       <div id="measurementHud" class="measurement-hud" hidden></div>
       <div id="focusHud" class="focus-hud" hidden></div>
       <div id="inspectorHud" class="measurement-hud inspector-hud" hidden></div>
+
+      <div id="studyPosterRoot" class="study-poster-root" hidden aria-hidden="true"></div>
 
       <div id="introOverlay" class="intro-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="introTitle">
         <div class="intro-panel">
@@ -107,6 +110,49 @@
         <section class="control-group">
           <label for="geometry">Geometry</label>
           <select id="geometry"></select>
+        </section>
+
+        <section class="control-group panel-section" id="studyModeSection">
+          <header class="panel-section-header">
+            <h2>Geometry Studies</h2>
+          </header>
+          <p class="hint study-controls-hint">Interactive poster-quality geometric studies with 3D construction, annotations, and high-resolution export.</p>
+          <div class="control-group row">
+            <label for="studyModeEnabled">Enable Study Mode</label>
+            <input id="studyModeEnabled" type="checkbox" />
+          </div>
+          <label for="studySelect">Study</label>
+          <select id="studySelect"></select>
+          <div class="control-group row">
+            <label for="studyPosterMode">Poster Export View</label>
+            <input id="studyPosterMode" type="checkbox" />
+          </div>
+          <section id="studyControls" hidden>
+            <button type="button" id="studyExportPoster">Export Poster PNG</button>
+            <button type="button" id="studyResetView" class="secondary">Reset Study View</button>
+            <div class="control-group row">
+              <label for="studySeqPlay">Construction Playback</label>
+              <input id="studySeqPlay" type="checkbox" />
+            </div>
+            <div class="preset-row">
+              <button type="button" id="studySeqBack" class="secondary">Seq −</button>
+              <button type="button" id="studySeqForward" class="secondary">Seq +</button>
+            </div>
+          </section>
+          <section id="studyRenderControls" hidden>
+            <p class="renderer-style-title">Study rendering</p>
+            <div class="control-group row"><label for="studyShowVertices">Vertices (spheres)</label><input id="studyShowVertices" type="checkbox" checked /></div>
+            <div class="control-group row"><label for="studyShowEdges">Edges</label><input id="studyShowEdges" type="checkbox" checked /></div>
+            <div class="control-group row"><label for="studyShowFaces">Faces</label><input id="studyShowFaces" type="checkbox" checked /></div>
+            <div class="control-group row"><label for="studyShowInternal">Internal geometry</label><input id="studyShowInternal" type="checkbox" checked /></div>
+            <div class="control-group row"><label for="studyShowLabels">Labels</label><input id="studyShowLabels" type="checkbox" checked /></div>
+            <div class="control-group row"><label for="studyShowCallouts">Callouts</label><input id="studyShowCallouts" type="checkbox" checked /></div>
+            <div class="control-group row"><label for="studyShowAxes">Axes</label><input id="studyShowAxes" type="checkbox" /></div>
+            <label for="studyFaceOpacity">Face transparency <span id="studyFaceOpacityValue">0.28</span></label>
+            <input id="studyFaceOpacity" class="touch-range" type="range" min="0.05" max="0.75" step="0.01" value="0.28" />
+            <label for="studySphereScale">Sphere size <span id="studySphereScaleValue">1.00</span></label>
+            <input id="studySphereScale" class="touch-range" type="range" min="0.4" max="2.5" step="0.05" value="1" />
+          </section>
         </section>
 
         <section class="control-group">
