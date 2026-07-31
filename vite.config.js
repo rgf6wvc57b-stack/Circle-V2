@@ -1,7 +1,8 @@
 import { defineConfig } from "vite";
+import { cloudflare } from "@cloudflare/vite-plugin";
 
 export default defineConfig({
- plugins:[],
+  plugins: [cloudflare()],
   base: "/",
   server: {
     host: "0.0.0.0",
