@@ -30,6 +30,18 @@ import {
   hexLatticeCenterCount,
 } from "./engine/generators/endless.js";
 import {
+  CONCENTRIC_SHELL_DEFAULT,
+  CONCENTRIC_SHELL_MAX,
+  CONCENTRIC_SHELL_MIN,
+  CONCENTRIC_SHELL_COLORS,
+  EXPLODE_SHELLS_DEFAULT,
+  EXPLODE_SHELLS_MAX,
+  EXPLODE_SHELLS_MIN,
+  clampConcentricShellCount,
+  clampExplodeShells,
+  concentricSphereCount,
+} from "./engine/generators/concentricShells.js";
+import {
   DEFAULT_ACTIVE_RENDER_LAYERS,
   RENDER_LAYERS,
   RENDER_LAYER_DRAW_ORDER,
@@ -139,6 +151,12 @@ const ui = {
   /** Endless geometry: currently visible rings (1..endlessRings). */
   endlessExpansionStep: ENDLESS_DEFAULT_RINGS,
   endlessAutoExpand: false,
+  /** 3D cubic sphere lattice: complete distance shells 0..3 on a 3×3×3 center grid. */
+  concentricShellCount: CONCENTRIC_SHELL_DEFAULT,
+  /** Radial shell separation multiplier; zero preserves canonical positions. */
+  explodeShells: EXPLODE_SHELLS_DEFAULT,
+  /** World-origin axis overlay visibility. */
+  showXYZAxes: true,
   autoPlay: false,
   transparency: 0,
   wireframe: false,
@@ -370,6 +388,7 @@ function applySphereColorsToRenderer({ rebuild = false } = {}) {
       sphereColors: ui.sphereColors,
       renderLayerStyles: ui.renderLayerStyles,
     });
+    updateSphereInfo();
     return;
   }
   engine.updateLayerStyles({
@@ -378,6 +397,7 @@ function applySphereColorsToRenderer({ rebuild = false } = {}) {
     pathThickness: ui.pathThickness,
   });
   engine.setSelectedSphereId(ui.sphereColors.selectedSphereId);
+  updateSphereInfo();
 }
 
 function syncSphereColorUI() {
@@ -385,7 +405,10 @@ function syncSphereColorUI() {
   document.getElementById("sphereColorMode").value = mode;
   document.getElementById("globalColorControls").hidden = mode !== COLOR_MODE.GLOBAL;
   document.getElementById("individualColorControls").hidden = mode !== COLOR_MODE.INDIVIDUAL;
-  focusSystem.setSelectOnly(mode === COLOR_MODE.INDIVIDUAL);
+  // Cubic sphere lattice always orbits the world origin, even when a sphere is selected.
+  focusSystem.setSelectOnly(
+    mode === COLOR_MODE.INDIVIDUAL || ui.geometry === "concentricShells"
+  );
 
   const g = ui.sphereColors.global;
   document.getElementById("globalSphereColor").value = g.hex;
@@ -427,6 +450,9 @@ function saveState() {
       endlessRings: ui.endlessRings,
       endlessExpansionStep: ui.endlessExpansionStep,
       endlessAutoExpand: ui.endlessAutoExpand,
+      concentricShellCount: ui.concentricShellCount,
+      explodeShells: ui.explodeShells,
+      showXYZAxes: ui.showXYZAxes,
       autoRotate: ui.autoRotate,
       autoRotateSpeed: ui.autoRotateSpeed,
       renderingPreset: ui.renderingPreset,
@@ -608,10 +634,16 @@ function updateSphereInfo() {
   const center = centers[idx];
   const pt = center ? data?.points?.find((p) => p.id === center.pointId) : null;
   const dist = pt ? Math.hypot(pt.x, pt.y, pt.z) : 0;
-  const ring = dist === 0 ? "Center" : `Ring ${Math.round(dist / ui.radius)}`;
-  const color = ui.sphereColors.mode === "individual"
-    ? (ui.sphereColors.individual[sel.id]?.color || ui.sphereColors.globalColor)
-    : ui.sphereColors.globalColor;
+  const shell = pt?.meta?.shell ?? center?.meta?.shell;
+  const shellOrRingValue =
+    shell != null
+      ? shell === 0
+        ? "Center"
+        : String(shell)
+      : dist === 0
+        ? "Center"
+        : String(Math.round(dist / ui.radius));
+  const color = resolveSphereColor(ui.sphereColors, center?.id ?? sel.id).hex;
 
   info.innerHTML = `
     <div class="insp-block">
@@ -620,7 +652,7 @@ function updateSphereInfo() {
         <span>Index</span><strong>${idx >= 0 ? idx : "—"}</strong>
         <span>ID</span><strong class="meas-mono">${sel.id}</strong>
         <span>Coordinates</span><strong class="meas-mono">${pt ? `(${pt.x.toFixed(2)}, ${pt.y.toFixed(2)}, ${pt.z.toFixed(2)})` : "—"}</strong>
-        <span>Ring</span><strong>${ring}</strong>
+        <span>${shell != null ? "Shell" : "Ring"}</span><strong>${shellOrRingValue}</strong>
         <span>Color</span><strong class="meas-mono">${color}</strong>
       </div>
     </div>
@@ -718,11 +750,15 @@ function resetControlsToDefaults() {
   stopEndlessAutoExpand();
   ui.endlessRings = ENDLESS_DEFAULT_RINGS;
   ui.endlessExpansionStep = ENDLESS_DEFAULT_RINGS;
+  ui.concentricShellCount = CONCENTRIC_SHELL_DEFAULT;
+  ui.explodeShells = EXPLODE_SHELLS_DEFAULT;
+  ui.showXYZAxes = true;
 
   document.getElementById("geometry").value = ui.geometry;
   syncRendererLayerUI();
   syncRenderLayerStyleUI();
   syncEndlessUI();
+  syncConcentricShellUI();
   document.getElementById("animSpeed").value = "0";
   document.getElementById("wireframe").checked = false;
   document.getElementById("material").value = "standard";
@@ -802,6 +838,12 @@ scene.add(designGroup);
 const explorationRoot = new THREE.Group();
 explorationRoot.name = "explorationRoot";
 scene.add(explorationRoot);
+
+/** World XYZ axes are overlays, not export geometry. Each line spans both signs. */
+const xyzAxesRoot = new THREE.Group();
+xyzAxesRoot.name = "xyzAxes";
+explorationRoot.add(xyzAxesRoot);
+let xyzAxesLength = 0;
 
 const engine = new ConstructionEngine(designGroup);
 const player = engine.player;
@@ -884,11 +926,63 @@ function downloadString(text, filename) {
   downloadBlob(new Blob([text], { type: "text/plain" }), filename);
 }
 
+function updateXYZAxes() {
+  const data = engine.getFullData();
+  let structureExtent = Math.max(ui.radius, 1);
+  if (data?.points?.length) {
+    structureExtent = Math.max(
+      structureExtent,
+      ...data.points.map((p) => Math.max(Math.abs(p.x), Math.abs(p.y), Math.abs(p.z)))
+    );
+    structureExtent += ui.radius;
+  }
+  const nextLength = Math.max(ui.radius * 3, structureExtent * 1.15);
+
+  if (Math.abs(nextLength - xyzAxesLength) > 1e-6) {
+    while (xyzAxesRoot.children.length) {
+      const child = xyzAxesRoot.children[0];
+      xyzAxesRoot.remove(child);
+      child.geometry?.dispose?.();
+      child.material?.dispose?.();
+    }
+
+    const axes = [
+      { id: "x", color: 0xff4d5a, from: [-nextLength, 0, 0], to: [nextLength, 0, 0] },
+      { id: "y", color: 0x55dd88, from: [0, -nextLength, 0], to: [0, nextLength, 0] },
+      { id: "z", color: 0x4d8dff, from: [0, 0, -nextLength], to: [0, 0, nextLength] },
+    ];
+    axes.forEach((axis) => {
+      const geometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(...axis.from),
+        new THREE.Vector3(...axis.to),
+      ]);
+      const material = new THREE.LineBasicMaterial({
+        color: axis.color,
+        transparent: true,
+        opacity: 0.9,
+        depthTest: false,
+      });
+      const line = new THREE.Line(geometry, material);
+      line.name = `${axis.id.toUpperCase()} axis`;
+      line.renderOrder = 1000;
+      line.userData = { kind: "worldAxis", axis: axis.id };
+      xyzAxesRoot.add(line);
+    });
+    xyzAxesLength = nextLength;
+  }
+
+  const hideWorld =
+    ui.renderMode === "constructionPlane" || ui.constructionMode || ui.evolutionMode;
+  xyzAxesRoot.visible = ui.showXYZAxes && !hideWorld;
+  canvas.dataset.xyzAxesVisible = xyzAxesRoot.visible ? "1" : "0";
+}
+
 function syncWorldDecor() {
   const hideWorld =
     ui.renderMode === "constructionPlane" || ui.constructionMode || ui.evolutionMode;
   floor.visible = !hideWorld;
   worldGrid.visible = !hideWorld;
+  updateXYZAxes();
 }
 
 function syncEvolutionUI() {
@@ -917,6 +1011,20 @@ function computeDesignBox() {
   if (designGroup.children.length) {
     const measured = new THREE.Box3().setFromObject(designGroup);
     if (!measured.isEmpty()) box.copy(measured);
+  }
+  if (ui.geometry === "concentricShells") {
+    // The shell generator is origin-symmetric. Symmetrizing measured mesh
+    // bounds removes sampling roundoff and keeps the orbit target exactly 0,0,0.
+    const maxAbs = Math.max(
+      Math.abs(box.min.x),
+      Math.abs(box.min.y),
+      Math.abs(box.min.z),
+      Math.abs(box.max.x),
+      Math.abs(box.max.y),
+      Math.abs(box.max.z)
+    );
+    box.min.set(-maxAbs, -maxAbs, -maxAbs);
+    box.max.set(maxAbs, maxAbs, maxAbs);
   }
   return box;
 }
@@ -1215,6 +1323,8 @@ function syncLabels() {
   }
   const envPresetEl = document.getElementById("environmentPreset");
   if (envPresetEl) envPresetEl.value = ui.environmentPreset;
+  const axesEl = document.getElementById("showXYZAxes");
+  if (axesEl) axesEl.checked = ui.showXYZAxes;
 }
 
 function syncStepDisplay() {
@@ -1305,6 +1415,64 @@ function syncTreeViewUI() {
   if (hint) hint.textContent = TREE_VIEW_HINTS[ui.treeViewMode] || TREE_VIEW_HINTS.traditional;
   const flagsGroup = document.getElementById("geometricFlagsGroup");
   if (flagsGroup) flagsGroup.hidden = true;
+}
+
+function concentricGeometryOpts() {
+  return {
+    shellCount: clampConcentricShellCount(ui.concentricShellCount),
+    explodeShells: clampExplodeShells(ui.explodeShells),
+  };
+}
+
+function ensureConcentricShellColors({ activate = false } = {}) {
+  if (ui.geometry !== "concentricShells") return;
+  if (activate) ui.sphereColors.mode = COLOR_MODE.INDIVIDUAL;
+  if (ui.sphereColors.mode !== COLOR_MODE.INDIVIDUAL) return;
+
+  const data = engine.getFullData();
+  data?.sphereCenters?.forEach((spec) => {
+    if (ui.sphereColors.bySphereId[spec.id]) return;
+    const shell = spec.meta?.shell ?? 0;
+    setIndividualColor(
+      ui.sphereColors,
+      spec.id,
+      spec.meta?.shellColor ?? CONCENTRIC_SHELL_COLORS[shell],
+      ui.sphereColors.global.opacity
+    );
+  });
+}
+
+function syncConcentricShellUI() {
+  const group = document.getElementById("concentricShellControls");
+  const isConcentric = ui.geometry === "concentricShells";
+  if (group) group.hidden = !isConcentric;
+
+  ui.concentricShellCount = clampConcentricShellCount(ui.concentricShellCount);
+  ui.explodeShells = clampExplodeShells(ui.explodeShells);
+
+  const countEl = document.getElementById("shellCount");
+  const countValue = document.getElementById("shellCountValue");
+  const explodeEl = document.getElementById("explodeShells");
+  const explodeValue = document.getElementById("explodeShellsValue");
+  const hint = document.getElementById("concentricShellHint");
+
+  if (countEl) {
+    countEl.min = String(CONCENTRIC_SHELL_MIN);
+    countEl.max = String(CONCENTRIC_SHELL_MAX);
+    countEl.value = String(ui.concentricShellCount);
+  }
+  if (countValue) countValue.textContent = String(ui.concentricShellCount);
+  if (explodeEl) {
+    explodeEl.min = String(EXPLODE_SHELLS_MIN);
+    explodeEl.max = String(EXPLODE_SHELLS_MAX);
+    explodeEl.value = String(ui.explodeShells);
+  }
+  if (explodeValue) explodeValue.textContent = ui.explodeShells.toFixed(2);
+  if (hint) {
+    hint.textContent =
+      `3×3×3 cubic lattice; showing distance shells 0–${ui.concentricShellCount}: ` +
+      `${concentricSphereCount(ui.concentricShellCount)} sphere centers at (0,0,0).`;
+  }
 }
 
 function endlessGeometryOpts() {
@@ -1426,6 +1594,8 @@ function rebuildFromGenerator() {
     engine.geometryOpts = treeGeometryOpts();
   } else if (ui.geometry === "endless") {
     engine.geometryOpts = endlessGeometryOpts();
+  } else if (ui.geometry === "concentricShells") {
+    engine.geometryOpts = concentricGeometryOpts();
   } else {
     engine.geometryOpts = {};
   }
@@ -1437,6 +1607,7 @@ function rebuildFromGenerator() {
     syncWorldDecor();
     syncTreeViewUI();
     syncEndlessUI();
+    syncConcentricShellUI();
     syncEvolutionUI();
     syncConstructionUI();
     syncLabels();
@@ -1446,16 +1617,18 @@ function rebuildFromGenerator() {
   }
 
   engine.regenerate();
+  ensureConcentricShellColors();
   player.setAnimSpeed(ui.animSpeed);
   applyAppearance();
   engine.setActiveRenderLayers(ui.activeRenderLayers);
   syncWorldDecor();
   syncTreeViewUI();
   syncEndlessUI();
+  syncConcentricShellUI();
 
   const max = engine.getMaxStep();
   document.getElementById("layers").max = String(max);
-  if (ui.geometry === "endless") {
+  if (ui.geometry === "endless" || ui.geometry === "concentricShells") {
     ui.constructionStep = max;
   } else if (ui.constructionStep > max) {
     ui.constructionStep = max;
@@ -1551,6 +1724,9 @@ function bindControls() {
         ui.endlessRings
       );
     }
+    if (ui.geometry === "concentricShells") {
+      ui.sphereColors.mode = COLOR_MODE.INDIVIDUAL;
+    }
     if (ui.geometry === "treeOfLife") {
       ui.treeViewMode = "traditional";
       document.getElementById("treeViewMode").value = ui.treeViewMode;
@@ -1565,7 +1741,9 @@ function bindControls() {
     syncDerivedRenderMode();
     syncRendererLayerUI();
     syncEndlessUI();
+    syncConcentricShellUI();
     rebuildFromGenerator();
+    syncSphereColorUI();
     guidedTutorial.onGeometryChanged(ui.geometry);
     saveState();
   });
@@ -1599,6 +1777,20 @@ function bindControls() {
 
   document.getElementById("endlessReset")?.addEventListener("click", () => {
     resetEndlessExpansion();
+    saveState();
+  });
+
+  document.getElementById("shellCount")?.addEventListener("input", (e) => {
+    ui.concentricShellCount = clampConcentricShellCount(Number(e.target.value));
+    syncConcentricShellUI();
+    if (ui.geometry === "concentricShells") rebuildFromGenerator();
+    saveState();
+  });
+
+  document.getElementById("explodeShells")?.addEventListener("input", (e) => {
+    ui.explodeShells = clampExplodeShells(Number(e.target.value));
+    syncConcentricShellUI();
+    if (ui.geometry === "concentricShells") rebuildFromGenerator();
     saveState();
   });
 
@@ -1900,12 +2092,14 @@ function bindControls() {
   });
   document.getElementById("resetSphereColor").addEventListener("click", () => {
     resetSphereColor(ui.sphereColors, ui.sphereColors.selectedSphereId);
+    ensureConcentricShellColors();
     syncSphereColorUI();
     applySphereColorsToRenderer();
     saveState();
   });
   document.getElementById("resetAllSphereColors").addEventListener("click", () => {
     resetAllIndividualColors(ui.sphereColors);
+    ensureConcentricShellColors();
     syncSphereColorUI();
     applySphereColorsToRenderer();
     saveState();
@@ -2100,6 +2294,12 @@ function bindControls() {
     saveState();
   });
 
+  document.getElementById("showXYZAxes")?.addEventListener("change", (e) => {
+    ui.showXYZAxes = e.target.checked;
+    syncWorldDecor();
+    saveState();
+  });
+
   document.getElementById("autoRotateSpeed")?.addEventListener("input", (e) => {
     ui.autoRotateSpeed = parseFloat(e.target.value);
     cameraController.controls.autoRotateSpeed = ui.autoRotateSpeed;
@@ -2229,7 +2429,7 @@ focusSystem.onChange = (sel) => {
     updateSphereInfo();
     return;
   }
-  const id = sel.pointId ?? sel.mesh?.userData?.specId ?? null;
+  const id = sel.mesh?.userData?.specId ?? sel.pointId ?? null;
   ui.sphereColors.selectedSphereId = id;
   engine.setSelectedSphereId(id);
   
@@ -2253,6 +2453,11 @@ function onViewportResize() {
   
   syncViewLayout();
   positionRendererPopover();
+  if (ui.geometry === "concentricShells" && designGroup.children.length) {
+    requestAnimationFrame(() =>
+      frameActiveConstruction({ animate: false, expandOnly: false })
+    );
+  }
 }
 
 window.addEventListener("resize", onViewportResize, { passive: true });
@@ -2340,6 +2545,7 @@ syncRenderLayerStyleUI();
 syncSphereColorUI();
 syncTreeViewUI();
 syncEndlessUI();
+syncConcentricShellUI();
 syncConstructionUI();
 syncEvolutionUI();
 syncLabels();
@@ -2359,11 +2565,14 @@ if (ui.geometry === "treeOfLife") {
   engine.geometryOpts = treeGeometryOpts();
 } else if (ui.geometry === "endless") {
   engine.geometryOpts = endlessGeometryOpts();
+} else if (ui.geometry === "concentricShells") {
+  engine.geometryOpts = concentricGeometryOpts();
 } else {
   engine.geometryOpts = {};
 }
 
 engine.regenerate();
+ensureConcentricShellColors();
 engine.setActiveRenderLayers(ui.activeRenderLayers);
 applyAppearance();
 

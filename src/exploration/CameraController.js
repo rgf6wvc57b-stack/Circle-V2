@@ -43,7 +43,9 @@ export class CameraController {
     this.controls.dampingFactor = 0.07;
     this.controls.enablePan = false;
     this.controls.minDistance = 0.8;
-    this.controls.maxDistance = 80;
+    // Shell radius 3 with maximum explosion needs a fitted distance above 200.
+    // Keep this below the camera far plane while allowing the full structure to fit.
+    this.controls.maxDistance = 450;
     this.controls.target.set(0, 0, 0);
 
     /** Geometric center of active construction */

@@ -92,6 +92,9 @@ export class MeasurementMode {
     this.lineMat.resolution.set(w, h);
   }
 
+  /** Measurement overlays are event-driven; retain the shared per-frame interface. */
+  update(_dt) {}
+
   #clearOverlay() {
     while (this.overlay.children.length) {
       const c = this.overlay.children.pop();

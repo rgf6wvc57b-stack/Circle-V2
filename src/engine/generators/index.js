@@ -15,6 +15,7 @@ import {
 import { generateFruitOfLife } from "./fruitOfLife.js";
 import { generateMetatronCube } from "./metatronCube.js";
 import { generatePlatonicSolids } from "./platonicSolids.js";
+import { generateConcentricShells } from "./concentricShells.js";
 import {
   listGeometriesByComplexity,
   listUiGeometryOptions,
@@ -30,6 +31,7 @@ const GENERATORS = {
   circle: generateCircle,
   sphere: generateSphere,
   singleSphere: generateSingleSphere,
+  concentricShells: generateConcentricShells,
   twoIntersectingSpheres: generateTwoIntersectingSpheres,
   vesicaPiscis: generateVesicaPiscis,
   seedOfLife: generateSeedOfLife,
@@ -66,7 +68,7 @@ export function generateGeometry(id, radius, opts = {}) {
   if (!fn) {
     throw new Error(`Unknown geometry generator: ${id}`);
   }
-  if (id === "treeOfLife" || id === "endless") {
+  if (id === "treeOfLife" || id === "endless" || id === "concentricShells") {
     return fn(radius, opts);
   }
   return fn(radius);
@@ -75,6 +77,7 @@ export function generateGeometry(id, radius, opts = {}) {
 export {
   generatePoint,
   generateSingleSphere,
+  generateConcentricShells,
   generateTwoIntersectingSpheres,
   generateCircle,
   generateSphere,

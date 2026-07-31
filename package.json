@@ -21,6 +21,8 @@
     "test:render-layer-styles": "node scripts/verify-render-layer-styles.mjs",
     "test:renderer-dropdown": "node scripts/verify-renderer-dropdown-opaque.mjs",
     "test:endless": "node scripts/verify-endless-geometry.mjs",
+    "test:concentric-shells": "node scripts/verify-concentric-shells.mjs",
+    "test:concentric-colors": "node scripts/verify-concentric-shell-colors.mjs",
     "test:ui-cleanup": "node scripts/verify-hidden-ui.mjs",
     "test:dark-bg": "node scripts/verify-dark-background.mjs",
     "test:menu": "node scripts/verify-menu-toggle.mjs",
