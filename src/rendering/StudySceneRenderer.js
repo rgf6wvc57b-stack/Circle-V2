@@ -133,16 +133,27 @@ export class StudySceneRenderer {
     return line;
   }
 
+  #getSharedMaterials() {
+    return new Set(Object.values(this.materials));
+  }
+
+  /** @returns {boolean} True when shared materials were not disposed by clear(). */
+  areSharedMaterialsIntact() {
+    return Object.values(this.materials).every((material) => !material.disposed);
+  }
+
   clear() {
+    const sharedMaterials = this.#getSharedMaterials();
     while (this.root.children.length) {
       const child = this.root.children[0];
       this.root.remove(child);
       child.traverse((node) => {
         node.geometry?.dispose?.();
-        if (node.material && node.isLine2 !== true) {
-          if (Array.isArray(node.material)) node.material.forEach((m) => m.dispose?.());
-          else node.material.dispose?.();
-        }
+        if (!node.material) return;
+        const materials = Array.isArray(node.material) ? node.material : [node.material];
+        materials.forEach((material) => {
+          if (!sharedMaterials.has(material)) material.dispose?.();
+        });
       });
     }
   }

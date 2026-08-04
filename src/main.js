@@ -2521,6 +2521,16 @@ window.__studyTestHooks = {
     });
     return count;
   },
+  getSharedMaterialState: () => {
+    const materials = studyController.studyRenderer.materials;
+    return {
+      intact: studyController.studyRenderer.areSharedMaterialsIntact(),
+      edgeDisposed: Boolean(materials.edge.disposed),
+      faceADisposed: Boolean(materials.faceA.disposed),
+      vertexDisposed: Boolean(materials.vertex.disposed),
+      edgeUuid: materials.edge.uuid,
+    };
+  },
   countExportWraps: () =>
     document.querySelectorAll("[data-poster-export-wrap]").length,
 };

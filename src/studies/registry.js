@@ -1,8 +1,7 @@
-export { MERKABA_STUDY } from "./definitions/merkabaStudy.js";
-export { DIMENSIONAL_STUDY } from "./definitions/dimensionalStudy.js";
-
 import { MERKABA_STUDY } from "./definitions/merkabaStudy.js";
 import { DIMENSIONAL_STUDY } from "./definitions/dimensionalStudy.js";
+
+export { MERKABA_STUDY, DIMENSIONAL_STUDY };
 
 /** @typedef {typeof MERKABA_STUDY | typeof DIMENSIONAL_STUDY} StudyDefinition */
 

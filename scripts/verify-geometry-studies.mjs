@@ -64,7 +64,14 @@ assert(/renderer\.getSize\(/.test(posterExportSrc), "poster export saves CSS dim
 assert(/includeExportMarker/.test(posterExportSrc), "poster export supports verification-only marker injection");
 assert(!/data-export-marker/.test(readFileSync(join(root, "src/studies/StudyController.js"), "utf8")), "live poster HTML does not include export marker");
 
+const registrySrc = readFileSync(join(root, "src/studies/registry.js"), "utf8");
+assert(!/^export \{ MERKABA_STUDY \} from/m.test(registrySrc), "registry.js does not duplicate re-export-before-import");
+assert(/import \{ MERKABA_STUDY \} from "\.\/definitions\/merkabaStudy\.js";/.test(registrySrc), "registry.js uses single import block");
+assert(/export \{ MERKABA_STUDY, DIMENSIONAL_STUDY \};/.test(registrySrc), "registry.js re-exports studies explicitly");
+
 const studyRendererSrc = readFileSync(join(root, "src/rendering/StudySceneRenderer.js"), "utf8");
+assert(/#getSharedMaterials\(\)/.test(studyRendererSrc), "study renderer tracks shared materials during clear()");
+assert(!/node\.isLine2 !== true/.test(studyRendererSrc), "clear() no longer skips shared LineMaterial disposal by isLine2 alone");
 assert(/Line2/.test(studyRendererSrc), "study renderer uses Line2 for thick lines");
 assert(/LineMaterial/.test(studyRendererSrc), "study renderer uses LineMaterial");
 assert(/Partial<typeof DEFAULT_STUDY_RENDER_OPTIONS>/.test(studyRendererSrc), "study renderer options JSDoc is valid");
@@ -175,6 +182,34 @@ try {
   await sleep(600);
   const dimensional = await page.$eval(".study-title", (el) => el.textContent);
   assert(/Dimensional Relationships/i.test(dimensional), "dimensional study loads");
+
+  // --- Repeated study switches/rebuilds keep shared materials intact ---
+  const materialRegression = await page.evaluate(async () => {
+    const hooks = window.__studyTestHooks;
+    const ctrl = hooks.getStudyController();
+    const edgeUuidBefore = hooks.getSharedMaterialState().edgeUuid;
+    for (let i = 0; i < 10; i += 1) {
+      ctrl.setStudy(i % 2 === 0 ? "merkaba-stellated-octahedron" : "dimensional-relationships");
+      ctrl.sequenceStep = i % 4;
+      ctrl.rebuild();
+      ctrl.syncPosterDOM();
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    const state = hooks.getSharedMaterialState();
+    return {
+      ...state,
+      edgeUuidBefore,
+      lineCount: hooks.countStudyLines(),
+      goldPixels: hooks.sampleStudyLineThickness().goldPixels,
+    };
+  });
+  assert(materialRegression.intact, "shared study materials remain intact after repeated rebuilds");
+  assert(!materialRegression.edgeDisposed, "shared edge LineMaterial not disposed");
+  assert(!materialRegression.faceADisposed, "shared face material not disposed");
+  assert(!materialRegression.vertexDisposed, "shared vertex material not disposed");
+  assert(materialRegression.edgeUuid === materialRegression.edgeUuidBefore, "shared edge material instance preserved");
+  assert(materialRegression.lineCount > 0, "repeated rebuilds still render Line2 geometry", String(materialRegression.lineCount));
+  assert(materialRegression.goldPixels > 0, "shared materials still render after repeated rebuilds", String(materialRegression.goldPixels));
 
   await page.click("#studyPosterMode");
   await sleep(300);
