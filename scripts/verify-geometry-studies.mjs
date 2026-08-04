@@ -2,7 +2,7 @@
  * Geometry study / poster engine verification.
  * Run: node scripts/verify-geometry-studies.mjs
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -13,7 +13,7 @@ import { STUDY_REGISTRY, getStudyById } from "../src/studies/registry.js";
 import { stellatedOctahedron, vesicaPiscisConstruction } from "../src/geometry/solids/catalog.js";
 import { StudyController } from "../src/studies/StudyController.js";
 import { MERKABA_STUDY } from "../src/studies/definitions/merkabaStudy.js";
-import { computeStudyPosterInsets } from "../src/studies/studyLayout.js";
+import { computeStudyViewLayout } from "../src/studies/studyLayout.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
@@ -82,9 +82,10 @@ const posterCss = readFileSync(join(root, "src/styles/poster.css"), "utf8");
 assert(/--study-panel-inset-right/.test(posterCss), "poster CSS reserves panel inset via custom property");
 assert(/study-poster-dimensional .study-info/.test(posterCss), "dimensional study-info has explicit grid placement");
 assert(/study-poster-exporting/.test(posterCss), "poster export hides control panel");
+assert(/\.study-blueprint-step\.active/.test(posterCss), "blueprint active step styling present");
 
 {
-  const insets = computeStudyPosterInsets({
+  const layout = computeStudyViewLayout({
     fullWidth: 2048,
     fullHeight: 1536,
     panelEl: {
@@ -99,15 +100,19 @@ assert(/study-poster-exporting/.test(posterCss), "poster export hides control pa
     },
     panelOpen: true,
     posterMode: false,
+    exporting: false,
   });
-  assert(insets.insetRight > 200, "iPad landscape reserves right inset for panel", String(insets.insetRight));
-  assert(insets.layout === "right", "iPad landscape uses right-panel layout");
-  const exportInsets = computeStudyPosterInsets({
+  assert(layout.insets.insetRight > 200, "iPad landscape reserves right inset for panel", String(layout.insets.insetRight));
+  assert(layout.rect.layout === "right", "iPad landscape uses right-panel layout");
+  assert(layout.rect.width === layout.insets.availableWidth, "camera rect width matches poster available width");
+  const exportLayout = computeStudyViewLayout({
     fullWidth: 2048,
     fullHeight: 1536,
-    posterMode: true,
+    exporting: true,
   });
-  assert(exportInsets.insetRight === 0 && exportInsets.insetBottom === 0, "poster export uses full viewport");
+  assert(exportLayout.fullFrame, "export layout is full frame");
+  assert(exportLayout.insets.insetRight === 0 && exportLayout.insets.insetBottom === 0, "export uses zero panel inset");
+  assert(exportLayout.rect.width === 2048, "export camera uses full viewport width");
 }
 
 // --- Node: transparent/null background restore on study exit ---
@@ -284,9 +289,11 @@ try {
     const before = hooks.getRendererState();
     const blob = await hooks.exportPosterBlob({ scale: 2 });
     const after = hooks.getRendererState();
+    const layout = hooks.getStudyLayoutState();
     return {
       before,
       after,
+      layout,
       blobSize: blob?.size ?? 0,
       wraps: hooks.countExportWraps(),
     };
@@ -296,7 +303,13 @@ try {
   assert(exportRestore.before.bufferWidth === exportRestore.after.bufferWidth, "export restores drawing-buffer width", `${exportRestore.before.bufferWidth} vs ${exportRestore.after.bufferWidth}`);
   assert(exportRestore.before.bufferHeight === exportRestore.after.bufferHeight, "export restores drawing-buffer height", `${exportRestore.before.bufferHeight} vs ${exportRestore.after.bufferHeight}`);
   assert(Math.abs(exportRestore.before.pixelRatio - exportRestore.after.pixelRatio) < 1e-6, "export restores pixel ratio", `${exportRestore.before.pixelRatio} vs ${exportRestore.after.pixelRatio}`);
-  assert(Math.abs(exportRestore.before.aspect - exportRestore.after.aspect) < 1e-6, "export restores camera aspect");
+  const expectedAspect =
+    exportRestore.layout.camera.width / Math.max(1, exportRestore.layout.camera.height);
+  assert(
+    Math.abs(exportRestore.after.aspect - expectedAspect) < 1e-3,
+    "export restores panel-aware camera aspect after study layout sync",
+    `${exportRestore.after.aspect} vs ${expectedAspect}`
+  );
   assert(exportRestore.wraps === 0, "export removes temporary wrapper elements", String(exportRestore.wraps));
   assert(exportRestore.blobSize > 5000, "exported PNG blob has substantial content", String(exportRestore.blobSize));
 
@@ -467,7 +480,8 @@ try {
     await sleep(600);
 
     const layout = await page.evaluate((selectors) => {
-      const insets = window.__studyTestHooks.getStudyPosterInsets();
+      const state = window.__studyTestHooks.getStudyLayoutState();
+      const insets = state.insets;
       const overlap = window.__studyTestHooks.measureStudyElementOverlaps(selectors);
       const geom = window.__studyTestHooks.measureStudyGeometrySize();
       const panel = document.getElementById("panel");
@@ -479,10 +493,20 @@ try {
         title.right > panelRect.left + 4 &&
         title.bottom > panelRect.top + 4 &&
         title.top < panelRect.bottom - 4;
-      return { insets, overlap, geom, panelOverlapTitle };
+      return { state, insets, overlap, geom, panelOverlapTitle };
     }, studyOverlapSelectors);
 
     assert(layout.insets.insetRight > 0 || layout.insets.insetBottom > 0, `${vp.name}: poster reserves panel inset`, JSON.stringify(layout.insets));
+    assert(
+      layout.state.camera && layout.state.camera.width < layout.state.camera.fullWidth - 100,
+      `${vp.name}: camera available rect reserves panel space`,
+      JSON.stringify(layout.state.camera)
+    );
+    assert(
+      Math.abs(layout.state.camera.width - (layout.state.camera.fullWidth - layout.insets.insetRight)) < 24,
+      `${vp.name}: camera and CSS insets stay synchronized`,
+      `camera=${layout.state.camera?.width} insetRight=${layout.insets.insetRight}`
+    );
     assert(layout.overlap.overlaps.length === 0, `${vp.name}: study poster elements do not overlap`, JSON.stringify(layout.overlap.overlaps));
     assert(!layout.panelOverlapTitle, `${vp.name}: title does not sit under control panel`);
     assert(layout.geom.goldSpan > 8, `${vp.name}: 3D geometry spans usable width`, `span=${layout.geom.goldSpan} avail=${layout.geom.availWidth}`);
@@ -495,7 +519,7 @@ try {
     console.log(`NOTE: saved ${join(screenshotDir, `study-dimensional-${vp.name}-after.png`)}`);
   }
 
-  // Poster export view uses full width (panel hidden)
+  // Poster export view uses full width (panel hidden) with synchronized camera
   await page.setViewport({ width: 2048, height: 1536, deviceScaleFactor: 1 });
   await page.evaluate(() => window.dispatchEvent(new Event("resize")));
   await page.evaluate(() => {
@@ -504,29 +528,97 @@ try {
   });
   await sleep(400);
   const posterModeLayout = await page.evaluate(() => {
-    const insets = window.__studyTestHooks.getStudyPosterInsets();
+    const state = window.__studyTestHooks.getStudyLayoutState();
     const panel = document.getElementById("panel");
     const style = panel ? getComputedStyle(panel) : null;
     const panelRect = panel?.getBoundingClientRect();
     return {
-      insets,
+      state,
       panelHidden:
         style?.visibility === "hidden" ||
         parseFloat(style?.opacity || "1") < 0.05 ||
         (panelRect && panelRect.left >= window.innerWidth - 4),
     };
   });
-  assert(posterModeLayout.insets.insetRight === 0 && posterModeLayout.insets.insetBottom === 0, "poster mode clears panel insets");
+  assert(posterModeLayout.state.insets.insetRight === 0 && posterModeLayout.state.insets.insetBottom === 0, "poster mode clears panel insets");
+  assert(posterModeLayout.state.camera.width === posterModeLayout.state.camera.fullWidth, "poster mode camera uses full viewport width");
+  assert(posterModeLayout.state.insets.fullFrame, "poster mode marks full-frame layout");
   assert(posterModeLayout.panelHidden, "poster mode hides control panel");
   await page.screenshot({
     path: join(screenshotDir, "study-poster-mode-ipad-landscape-after.png"),
     fullPage: false,
   });
 
+  // PNG export keeps full-frame layout for the entire operation
+  await page.evaluate(() => {
+    const ctrl = window.__studyTestHooks.getStudyController();
+    ctrl.setPosterMode(false);
+    window.__studyTestHooks.setPanelOpen(true);
+    window.dispatchEvent(new Event("resize"));
+    window.__studyTestHooks.syncStudyViewLayout();
+    ctrl.frameStudy();
+  });
+  await sleep(300);
+  const exportProbe = await page.evaluate(async () => window.__studyTestHooks.probeExportLayout({ scale: 2 }));
+  assert(exportProbe.during?.exporting, "export probe runs while exporting");
+  assert(exportProbe.during?.insets.insetRight === 0 && exportProbe.during?.insets.insetBottom === 0, "export keeps zero CSS panel inset");
+  assert(
+    exportProbe.during?.camera?.width === exportProbe.during?.camera?.fullWidth,
+    "export keeps full-width camera rect",
+    JSON.stringify(exportProbe.during?.camera)
+  );
+  assert(exportProbe.after?.insets.insetRight > 0, "export restore returns panel-aware CSS inset");
+  assert(exportProbe.after?.camera?.width < exportProbe.after?.camera?.fullWidth, "export restore returns panel-aware camera rect");
+
+  const exportPosterBytes = await page.evaluate(async () => {
+    const blob = await window.__studyTestHooks.exportPosterBlob({ scale: 2, includeExportMarker: false });
+    const buf = await blob.arrayBuffer();
+    return Array.from(new Uint8Array(buf));
+  });
+  writeFileSync(join(screenshotDir, "study-poster-export-ipad-landscape-after.png"), Buffer.from(exportPosterBytes));
+
+  // Dimensional callouts: visible wide, hidden at collision breakpoints
   await page.evaluate(() => {
     const cb = document.getElementById("studyPosterMode");
     if (cb.checked) cb.click();
   });
+  await sleep(200);
+  await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+  await page.evaluate(() => {
+    window.__studyTestHooks.setPanelOpen(false);
+    window.dispatchEvent(new Event("resize"));
+    window.__studyTestHooks.getStudyController().frameStudy();
+  });
+  await sleep(400);
+  const wideCallouts = await page.evaluate(() => window.__studyTestHooks.getCalloutVisibility());
+  assert(wideCallouts.visible, "dimensional callouts visible in wide layout with panel closed", JSON.stringify(wideCallouts));
+
+  await page.setViewport({ width: 1000, height: 800, deviceScaleFactor: 1 });
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("resize"));
+    window.__studyTestHooks.getStudyController().frameStudy();
+  });
+  await sleep(300);
+  const narrowCallouts = await page.evaluate(() => window.__studyTestHooks.getCalloutVisibility());
+  assert(!narrowCallouts.visible, "dimensional callouts hidden below 1100px breakpoint", JSON.stringify(narrowCallouts));
+
+  await page.setViewport({ width: 2048, height: 1536, deviceScaleFactor: 1 });
+  await page.evaluate(() => {
+    window.__studyTestHooks.setPanelOpen(true);
+    window.dispatchEvent(new Event("resize"));
+    window.__studyTestHooks.getStudyController().frameStudy();
+  });
+  await sleep(300);
+  const panelCallouts = await page.evaluate(() => window.__studyTestHooks.getCalloutVisibility());
+  assert(!panelCallouts.visible, "dimensional callouts hidden when right panel is open", JSON.stringify(panelCallouts));
+
+  // Blueprint step styling remains distinct
+  await page.select("#studySelect", "merkaba-stellated-octahedron");
+  await sleep(400);
+  const blueprintStyles = await page.evaluate(() => window.__studyTestHooks.getBlueprintStepStyles());
+  assert(blueprintStyles.count >= 4, "merkaba blueprint steps render", String(blueprintStyles.count));
+  assert(blueprintStyles.hasInactive, "merkaba blueprint has inactive steps");
+  assert(blueprintStyles.activeDiffers, "active blueprint step is visually distinct", JSON.stringify(blueprintStyles));
   await sleep(200);
   await page.click("#studyModeEnabled");
   await sleep(500);

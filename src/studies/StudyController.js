@@ -1,6 +1,5 @@
 import * as THREE from "three";
 import { exportPosterPng } from "../export/posterExport.js";
-import { applyStudyPosterInsets } from "./studyLayout.js";
 import { DEFAULT_STUDY_RENDER_OPTIONS, POSTER_PALETTE } from "../rendering/studyPalette.js";
 import { StudySceneRenderer } from "../rendering/StudySceneRenderer.js";
 import { getStudyById, listStudies } from "./registry.js";
@@ -32,6 +31,8 @@ export class StudyController {
     this.studyRenderer = new StudySceneRenderer(this.studyGroup, { ...DEFAULT_STUDY_RENDER_OPTIONS });
     this.active = false;
     this.posterMode = false;
+    this._exporting = false;
+    this._exportLayoutProbe = null;
     this.studyId = MERKABA_STUDY.id;
     this.options = { ...DEFAULT_STUDY_RENDER_OPTIONS };
     this.sequenceStep = 0;
@@ -53,6 +54,14 @@ export class StudyController {
 
   listStudies() {
     return listStudies();
+  }
+
+  isExporting() {
+    return this._exporting;
+  }
+
+  setExportLayoutProbe(fn) {
+    this._exportLayoutProbe = fn;
   }
 
   isActive() {
@@ -83,6 +92,7 @@ export class StudyController {
   exit() {
     this.active = false;
     this.posterMode = false;
+    this._exporting = false;
     this.studyGroup.visible = false;
     this.#applyPosterBackground(false);
     this.posterRoot.hidden = true;
@@ -461,16 +471,11 @@ export class StudyController {
   }
 
   async exportPoster({ scale = 3, download = true, forceHtmlCompositeFailure = false, includeExportMarker = false } = {}) {
-    applyStudyPosterInsets(this.appRoot, {
-      insetRight: 0,
-      insetBottom: 0,
-      availableWidth: window.innerWidth,
-      availableHeight: window.innerHeight,
-      layout: "full",
-    });
-    this.appRoot.classList.add("study-poster-exporting");
+    this._exporting = true;
+    if (this._onLayoutSync) this._onLayoutSync();
     this.frameStudy();
     try {
+      if (this._exportLayoutProbe) this._exportLayoutProbe();
       return await exportPosterPng({
         renderer: this.renderer,
         scene: this.scene,
@@ -484,7 +489,7 @@ export class StudyController {
         includeExportMarker,
       });
     } finally {
-      this.appRoot.classList.remove("study-poster-exporting");
+      this._exporting = false;
       if (this._onLayoutSync) this._onLayoutSync();
       if (this.active) this.frameStudy();
     }

@@ -16,6 +16,7 @@
 
 #app.study-active #panel {
   z-index: 6;
+  transition: none;
 }
 
 /* Poster export view: controls leave the frame entirely. */
@@ -24,6 +25,7 @@
   visibility: hidden;
   pointer-events: none;
   transform: translateX(calc(100% + 28px));
+  transition: none;
 }
 
 #app.study-poster-exporting #panel {
@@ -31,6 +33,7 @@
   visibility: hidden;
   pointer-events: none;
   transform: translateX(calc(100% + 28px));
+  transition: none;
 }
 
 #app.study-poster-exporting .study-poster-root {
@@ -47,6 +50,11 @@
 }
 
 #app.study-poster-mode .study-poster-root {
+  right: 0;
+  bottom: 0;
+}
+
+#app.study-full-frame .study-poster-root {
   right: 0;
   bottom: 0;
 }
@@ -115,20 +123,18 @@
 }
 
 .study-callouts {
-  display: none;
-}
-
-.study-poster-merkaba .study-callouts {
-  display: flex;
   position: absolute;
   right: clamp(8px, 2vw, 24px);
   top: 18%;
+  display: flex;
   flex-direction: column;
   gap: 10px;
   max-width: 180px;
 }
 
-#app.study-panel-right .study-poster-merkaba .study-callouts {
+/* Hide callouts only when they would collide with chrome. */
+#app.study-panel-right .study-callouts,
+#app.study-panel-bottom .study-callouts {
   display: none;
 }
 
@@ -246,6 +252,23 @@
   pointer-events: auto;
 }
 
+.study-blueprint-step {
+  pointer-events: auto;
+  border: 1px solid rgba(201, 162, 39, 0.45);
+  background: rgba(12, 12, 12, 0.85);
+  color: #d4af37;
+  font-family: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.study-blueprint-step.active {
+  background: rgba(201, 162, 39, 0.18);
+  border-color: #d4af37;
+}
+
 .study-ratio-row {
   grid-column: 1;
   grid-row: 2;
@@ -301,6 +324,10 @@
   .study-poster-dimensional .study-ratio-row {
     grid-template-columns: 1fr;
   }
+
+  .study-callouts {
+    display: none;
+  }
 }
 
 @media (max-width: 1100px) {
@@ -326,10 +353,6 @@
 
   .study-blueprint {
     grid-row: 4;
-  }
-
-  .study-poster-merkaba .study-callouts {
-    display: none;
   }
 }
 
