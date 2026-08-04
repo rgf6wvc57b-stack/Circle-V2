@@ -13,6 +13,7 @@ import { STUDY_REGISTRY, getStudyById } from "../src/studies/registry.js";
 import { stellatedOctahedron, vesicaPiscisConstruction } from "../src/geometry/solids/catalog.js";
 import { StudyController } from "../src/studies/StudyController.js";
 import { MERKABA_STUDY } from "../src/studies/definitions/merkabaStudy.js";
+import { computeStudyPosterInsets } from "../src/studies/studyLayout.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
@@ -76,6 +77,38 @@ assert(/Line2/.test(studyRendererSrc), "study renderer uses Line2 for thick line
 assert(/LineMaterial/.test(studyRendererSrc), "study renderer uses LineMaterial");
 assert(/Partial<typeof DEFAULT_STUDY_RENDER_OPTIONS>/.test(studyRendererSrc), "study renderer options JSDoc is valid");
 assert(/showGuides/.test(studyRendererSrc), "study renderer honors showGuides for lines and circles");
+
+const posterCss = readFileSync(join(root, "src/styles/poster.css"), "utf8");
+assert(/--study-panel-inset-right/.test(posterCss), "poster CSS reserves panel inset via custom property");
+assert(/study-poster-dimensional .study-info/.test(posterCss), "dimensional study-info has explicit grid placement");
+assert(/study-poster-exporting/.test(posterCss), "poster export hides control panel");
+
+{
+  const insets = computeStudyPosterInsets({
+    fullWidth: 2048,
+    fullHeight: 1536,
+    panelEl: {
+      getBoundingClientRect: () => ({
+        left: 1712,
+        right: 2048,
+        top: 16,
+        bottom: 1500,
+        width: 336,
+        height: 1484,
+      }),
+    },
+    panelOpen: true,
+    posterMode: false,
+  });
+  assert(insets.insetRight > 200, "iPad landscape reserves right inset for panel", String(insets.insetRight));
+  assert(insets.layout === "right", "iPad landscape uses right-panel layout");
+  const exportInsets = computeStudyPosterInsets({
+    fullWidth: 2048,
+    fullHeight: 1536,
+    posterMode: true,
+  });
+  assert(exportInsets.insetRight === 0 && exportInsets.insetBottom === 0, "poster export uses full viewport");
+}
 
 // --- Node: transparent/null background restore on study exit ---
 {
@@ -393,7 +426,107 @@ try {
   assert(posterContent.blobSize > 5000, "exported PNG blob is non-trivial", String(posterContent.blobSize));
   console.log("NOTE: Safari/WebKit poster export was not run in CI (Chrome headless only); manual Safari verification still required.");
 
-  await page.click("#studyPosterMode");
+  // --- Responsive layout: iPad landscape, iPad portrait, iPhone portrait ---
+  await page.evaluate(() => {
+    const studyCb = document.getElementById("studyModeEnabled");
+    if (!studyCb.checked) studyCb.click();
+    const posterCb = document.getElementById("studyPosterMode");
+    if (posterCb.checked) posterCb.click();
+  });
+  await sleep(600);
+  const studyOverlapSelectors = [
+    ".study-title",
+    ".study-subtitle",
+    ".study-ratio-row",
+    ".study-info",
+    ".study-footer",
+    ".study-summary",
+  ];
+  const viewports = [
+    { name: "ipad-landscape", width: 2048, height: 1536 },
+    { name: "ipad-portrait", width: 1536, height: 2048 },
+    { name: "iphone-portrait", width: 1179, height: 2556 },
+  ];
+  const screenshotDir = "/opt/cursor/artifacts/screenshots";
+  try {
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(screenshotDir, { recursive: true });
+  } catch {
+    // directory may already exist
+  }
+
+  await page.select("#studySelect", "dimensional-relationships");
+  await sleep(400);
+
+  for (const vp of viewports) {
+    await page.setViewport({ width: vp.width, height: vp.height, deviceScaleFactor: 1 });
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("resize"));
+      window.__studyTestHooks.getStudyController().frameStudy();
+    });
+    await sleep(600);
+
+    const layout = await page.evaluate((selectors) => {
+      const insets = window.__studyTestHooks.getStudyPosterInsets();
+      const overlap = window.__studyTestHooks.measureStudyElementOverlaps(selectors);
+      const geom = window.__studyTestHooks.measureStudyGeometrySize();
+      const panel = document.getElementById("panel");
+      const panelRect = panel?.getBoundingClientRect();
+      const title = document.querySelector(".study-title")?.getBoundingClientRect();
+      const panelOverlapTitle =
+        title &&
+        panelRect &&
+        title.right > panelRect.left + 4 &&
+        title.bottom > panelRect.top + 4 &&
+        title.top < panelRect.bottom - 4;
+      return { insets, overlap, geom, panelOverlapTitle };
+    }, studyOverlapSelectors);
+
+    assert(layout.insets.insetRight > 0 || layout.insets.insetBottom > 0, `${vp.name}: poster reserves panel inset`, JSON.stringify(layout.insets));
+    assert(layout.overlap.overlaps.length === 0, `${vp.name}: study poster elements do not overlap`, JSON.stringify(layout.overlap.overlaps));
+    assert(!layout.panelOverlapTitle, `${vp.name}: title does not sit under control panel`);
+    assert(layout.geom.goldSpan > 8, `${vp.name}: 3D geometry spans usable width`, `span=${layout.geom.goldSpan} avail=${layout.geom.availWidth}`);
+    assert(layout.geom.goldPixels > 80, `${vp.name}: 3D geometry renders visible gold lines`, String(layout.geom.goldPixels));
+
+    await page.screenshot({
+      path: join(screenshotDir, `study-dimensional-${vp.name}-after.png`),
+      fullPage: false,
+    });
+    console.log(`NOTE: saved ${join(screenshotDir, `study-dimensional-${vp.name}-after.png`)}`);
+  }
+
+  // Poster export view uses full width (panel hidden)
+  await page.setViewport({ width: 2048, height: 1536, deviceScaleFactor: 1 });
+  await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+  await page.evaluate(() => {
+    const cb = document.getElementById("studyPosterMode");
+    if (!cb.checked) cb.click();
+  });
+  await sleep(400);
+  const posterModeLayout = await page.evaluate(() => {
+    const insets = window.__studyTestHooks.getStudyPosterInsets();
+    const panel = document.getElementById("panel");
+    const style = panel ? getComputedStyle(panel) : null;
+    const panelRect = panel?.getBoundingClientRect();
+    return {
+      insets,
+      panelHidden:
+        style?.visibility === "hidden" ||
+        parseFloat(style?.opacity || "1") < 0.05 ||
+        (panelRect && panelRect.left >= window.innerWidth - 4),
+    };
+  });
+  assert(posterModeLayout.insets.insetRight === 0 && posterModeLayout.insets.insetBottom === 0, "poster mode clears panel insets");
+  assert(posterModeLayout.panelHidden, "poster mode hides control panel");
+  await page.screenshot({
+    path: join(screenshotDir, "study-poster-mode-ipad-landscape-after.png"),
+    fullPage: false,
+  });
+
+  await page.evaluate(() => {
+    const cb = document.getElementById("studyPosterMode");
+    if (cb.checked) cb.click();
+  });
   await sleep(200);
   await page.click("#studyModeEnabled");
   await sleep(500);

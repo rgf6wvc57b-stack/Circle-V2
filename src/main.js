@@ -80,6 +80,11 @@ import {
 } from "./app/mobileSheet.js";
 import { StudyController } from "./studies/StudyController.js";
 import { bindStudyControls } from "./app/studyModeUI.js";
+import {
+  applyStudyPosterInsets,
+  clearStudyPosterInsets,
+  computeStudyPosterInsets,
+} from "./studies/studyLayout.js";
 const canvas = document.getElementById("viewport");
 const appRoot = document.getElementById("app");
 
@@ -820,6 +825,7 @@ const studyController = new StudyController({
   appRoot,
   panel: document.getElementById("panel"),
   studyGroup,
+  onLayoutSync: () => syncStudyLayout(),
 });
 
 function syncStudyVisibility() {
@@ -967,7 +973,26 @@ function syncViewLayout() {
         : null,
   });
   cameraController.setAvailableViewRect(rect);
+  syncStudyLayout();
   return rect;
+}
+
+function syncStudyLayout() {
+  if (!studyController.isActive()) {
+    clearStudyPosterInsets(appRoot);
+    return null;
+  }
+  const panelEl = document.getElementById("panel");
+  const panelOpen = isMobileSheetLayout() ? true : ui.panelOpen;
+  const insets = computeStudyPosterInsets({
+    fullWidth: window.innerWidth,
+    fullHeight: window.innerHeight,
+    panelEl,
+    panelOpen,
+    posterMode: studyController.posterMode,
+  });
+  applyStudyPosterInsets(appRoot, insets);
+  return insets;
 }
 
 function frameActiveConstruction({
@@ -2533,6 +2558,83 @@ window.__studyTestHooks = {
   },
   countExportWraps: () =>
     document.querySelectorAll("[data-poster-export-wrap]").length,
+  getStudyPosterInsets: () => {
+    const app = document.getElementById("app");
+    const cs = app ? getComputedStyle(app) : getComputedStyle(document.documentElement);
+    return {
+      insetRight: parseFloat(cs.getPropertyValue("--study-panel-inset-right")) || 0,
+      insetBottom: parseFloat(cs.getPropertyValue("--study-panel-inset-bottom")) || 0,
+      panelRight: app?.classList.contains("study-panel-right") ?? false,
+      panelBottom: app?.classList.contains("study-panel-bottom") ?? false,
+    };
+  },
+  measureStudyElementOverlaps: (selectors) => {
+    const rects = selectors
+      .map((sel) => {
+        const el = document.querySelector(sel);
+        if (!el || el.hidden) return null;
+        const style = getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") return null;
+        const r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) return null;
+        return { sel, ...r };
+      })
+      .filter(Boolean);
+    const overlaps = [];
+    for (let i = 0; i < rects.length; i += 1) {
+      for (let j = i + 1; j < rects.length; j += 1) {
+        const a = rects[i];
+        const b = rects[j];
+        const w = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+        const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        if (w > 4 && h > 4) {
+          overlaps.push({ a: a.sel, b: b.sel, area: w * h });
+        }
+      }
+    }
+    return { rects: rects.map(({ sel, width, height, top, left }) => ({ sel, width, height, top, left })), overlaps };
+  },
+  measureStudyGeometrySize: () => {
+    const rect = syncViewLayout();
+    const ctrl = studyController;
+    ctrl.frameStudy();
+    webgl.render(scene, cameraController.getActiveCamera());
+    const canvas = webgl.domElement;
+    const w = canvas.width;
+    const h = canvas.height;
+    const copy = document.createElement("canvas");
+    copy.width = w;
+    copy.height = h;
+    const c2 = copy.getContext("2d");
+    if (!c2) return { goldSpan: 0, goldPixels: 0, availWidth: rect.width };
+    c2.drawImage(canvas, 0, 0);
+    const fullW = window.innerWidth;
+    const scanLeft = Math.max(0, Math.floor((rect.x / fullW) * w));
+    const scanWidth = Math.max(1, Math.floor((rect.width / fullW) * w));
+    const bandTop = Math.floor(h * 0.18);
+    const bandH = Math.floor(h * 0.55);
+    const image = c2.getImageData(scanLeft, bandTop, scanWidth, bandH);
+    let maxSpan = 0;
+    let goldPixels = 0;
+    for (let y = 0; y < bandH; y += 1) {
+      let currentSpan = 0;
+      for (let x = 0; x < scanWidth; x += 1) {
+        const i = (y * scanWidth + x) * 4;
+        const r = image.data[i];
+        const g = image.data[i + 1];
+        const b = image.data[i + 2];
+        const isGold = r > 120 && g > 85 && b < 130;
+        if (isGold) {
+          goldPixels += 1;
+          currentSpan += 1;
+          maxSpan = Math.max(maxSpan, currentSpan);
+        } else {
+          currentSpan = 0;
+        }
+      }
+    }
+    return { goldSpan: maxSpan, goldPixels, availWidth: rect.width, scanWidth };
+  },
 };
 
 animate();
