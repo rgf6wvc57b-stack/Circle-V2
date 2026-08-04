@@ -1,0 +1,448 @@
+/**
+ * Geometry study / poster engine verification.
+ * Run: node scripts/verify-geometry-studies.mjs
+ */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+import { setTimeout as sleep } from "node:timers/promises";
+import * as THREE from "three";
+import { STUDY_REGISTRY, getStudyById } from "../src/studies/registry.js";
+import { stellatedOctahedron, vesicaPiscisConstruction } from "../src/geometry/solids/catalog.js";
+import { StudyController } from "../src/studies/StudyController.js";
+import { MERKABA_STUDY } from "../src/studies/definitions/merkabaStudy.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const root = join(__dirname, "..");
+let failed = 0;
+
+function assert(condition, message, detail = "") {
+  if (condition) console.log("PASS:", message, detail ? `— ${detail}` : "");
+  else {
+    failed += 1;
+    console.error("FAIL:", message, detail ? `— ${detail}` : "");
+  }
+}
+
+assert(STUDY_REGISTRY.length === 2, "study registry has two studies");
+assert(getStudyById("merkaba-stellated-octahedron"), "merkaba study registered");
+assert(getStudyById("dimensional-relationships"), "dimensional study registered");
+
+const merkabaSrc = readFileSync(join(root, "src/studies/definitions/merkabaStudy.js"), "utf8");
+assert(!/export const DIMENSIONAL_STUDY/.test(merkabaSrc), "merkaba study file has no duplicate DIMENSIONAL_STUDY export");
+
+const polySrc = readFileSync(join(root, "src/geometry/primitives/polyhedron.js"), "utf8");
+assert(!/completeEdges/.test(polySrc), "dead completeEdges helper removed");
+assert(!/cubeEdges/.test(polySrc), "broken cubeEdges helper removed");
+
+const merkaba = stellatedOctahedron(1);
+assert(merkaba.vertices.length === 8, "stellated octahedron has 8 vertices");
+assert(merkaba.edges.length === 12, "stellated octahedron has 12 edges");
+assert(merkaba.triFaces.length === 8, "stellated octahedron has 8 triangular faces");
+
+const vesica = vesicaPiscisConstruction(1);
+assert(vesica.squareVerts.length === 4, "vesica construction includes inscribed square");
+assert(Math.abs(vesica.width - 1) < 1e-9, "vesica width matches radius");
+
+const html = readFileSync(join(root, "index.html"), "utf8");
+assert(/Geometry Studies/.test(html), "study UI section present");
+assert(/studyModeEnabled/.test(html), "study mode toggle present");
+assert(/studyExportPoster/.test(html), "poster export button present");
+assert(/studyLineWidth/.test(html), "line thickness slider present");
+assert(!/<div id="studyPosterRoot"[^>]*aria-hidden="true"/.test(html), "poster root has no permanent aria-hidden");
+
+const main = readFileSync(join(root, "src/main.js"), "utf8");
+assert(/StudyController/.test(main), "StudyController wired in main.js");
+assert(/studyGroup/.test(main), "study group added to scene");
+
+const posterExportSrc = readFileSync(join(root, "src/export/posterExport.js"), "utf8");
+assert(/finally\s*\{/.test(posterExportSrc), "poster export uses finally cleanup");
+assert(/URL\.revokeObjectURL/.test(posterExportSrc), "poster export revokes object URLs");
+assert(/renderer\.getSize\(/.test(posterExportSrc), "poster export saves CSS dimensions via renderer.getSize()");
+assert(/includeExportMarker/.test(posterExportSrc), "poster export supports verification-only marker injection");
+assert(!/data-export-marker/.test(readFileSync(join(root, "src/studies/StudyController.js"), "utf8")), "live poster HTML does not include export marker");
+
+const registrySrc = readFileSync(join(root, "src/studies/registry.js"), "utf8");
+assert(!/^export \{ MERKABA_STUDY \} from/m.test(registrySrc), "registry.js does not duplicate re-export-before-import");
+assert(/import \{ MERKABA_STUDY \} from "\.\/definitions\/merkabaStudy\.js";/.test(registrySrc), "registry.js uses single import block");
+assert(/export \{ MERKABA_STUDY, DIMENSIONAL_STUDY \};/.test(registrySrc), "registry.js re-exports studies explicitly");
+
+const studyRendererSrc = readFileSync(join(root, "src/rendering/StudySceneRenderer.js"), "utf8");
+assert(/#getSharedMaterials\(\)/.test(studyRendererSrc), "study renderer tracks shared materials during clear()");
+assert(!/node\.isLine2 !== true/.test(studyRendererSrc), "clear() no longer skips shared LineMaterial disposal by isLine2 alone");
+assert(/Line2/.test(studyRendererSrc), "study renderer uses Line2 for thick lines");
+assert(/LineMaterial/.test(studyRendererSrc), "study renderer uses LineMaterial");
+assert(/Partial<typeof DEFAULT_STUDY_RENDER_OPTIONS>/.test(studyRendererSrc), "study renderer options JSDoc is valid");
+assert(/showGuides/.test(studyRendererSrc), "study renderer honors showGuides for lines and circles");
+
+// --- Node: transparent/null background restore on study exit ---
+{
+  const windowStub = { addEventListener() {}, removeEventListener() {} };
+  const prevWindow = globalThis.window;
+  globalThis.window = windowStub;
+
+  const scene = new THREE.Scene();
+  scene.background = null;
+  scene.fog = new THREE.FogExp2(0x0e1a24, 0.035);
+
+  const posterRoot = {
+    hidden: true,
+    innerHTML: "",
+    querySelectorAll: () => [],
+    contains: () => false,
+    setAttribute() {},
+    addEventListener() {},
+  };
+
+  const controller = new StudyController({
+    renderer: { domElement: { width: 800, height: 600 } },
+    scene,
+    cameraController: {
+      getActiveCamera: () => ({ aspect: 1, updateProjectionMatrix() {} }),
+      frameBox() {},
+    },
+    posterRoot,
+    appRoot: { classList: { add() {}, remove() {}, toggle() {} }, getBoundingClientRect: () => ({ width: 800, height: 600 }) },
+    panel: {},
+    studyGroup: new THREE.Group(),
+  });
+
+  controller.enter(MERKABA_STUDY.id);
+  assert(scene.background instanceof THREE.Color, "study enter applies poster background");
+  assert(scene.fog === null, "study enter clears fog");
+
+  controller.exit();
+  assert(scene.background === null, "study exit restores null scene background");
+  assert(scene.fog instanceof THREE.FogExp2, "study exit restores previous fog");
+
+  globalThis.window = prevWindow;
+}
+
+await run("npm", ["run", "build"]);
+
+const port = "4311";
+const base = `http://127.0.0.1:${port}/`;
+const preview = spawn(
+  process.execPath,
+  [join(root, "node_modules/vite/bin/vite.js"), "preview", "--host", "127.0.0.1", "--port", port],
+  { cwd: root, stdio: ["ignore", "pipe", "pipe"] }
+);
+
+try {
+  await waitForServer(base);
+  const puppeteer = await ensurePuppeteer();
+  const browser = await puppeteer.launch({
+    executablePath: "/usr/bin/google-chrome-stable",
+    headless: "new",
+    args: ["--no-sandbox", "--disable-dev-shm-usage", "--enable-unsafe-swiftshader"],
+  });
+  const page = await browser.newPage();
+  await page.setViewport({ width: 800, height: 600, deviceScaleFactor: 2 });
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.evaluateOnNewDocument(() => {
+    localStorage.clear();
+    localStorage.setItem("geometry-explor:show-intro-on-open", "0");
+  });
+  await page.goto(base, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await page.waitForFunction(() => window.__studyTestHooks, { timeout: 15000 });
+  await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+  await sleep(400);
+
+  const initialRenderer = await page.evaluate(() => window.__studyTestHooks.getRendererState());
+  assert(initialRenderer.pixelRatio === 2, "high-DPI page uses deviceScaleFactor 2", String(initialRenderer.pixelRatio));
+  assert(
+    initialRenderer.bufferWidth === Math.round(initialRenderer.cssWidth * initialRenderer.pixelRatio),
+    "drawing buffer width matches CSS width × pixel ratio",
+    `${initialRenderer.bufferWidth} vs ${initialRenderer.cssWidth}×${initialRenderer.pixelRatio}`
+  );
+  assert(
+    initialRenderer.bufferHeight === Math.round(initialRenderer.cssHeight * initialRenderer.pixelRatio),
+    "drawing buffer height matches CSS height × pixel ratio",
+    `${initialRenderer.bufferHeight} vs ${initialRenderer.cssHeight}×${initialRenderer.pixelRatio}`
+  );
+
+  await page.click("#studyModeEnabled");
+  await sleep(800);
+  const merkabaActive = await page.evaluate(() => ({
+    studyOn: document.getElementById("studyModeEnabled").checked,
+    posterVisible: !document.getElementById("studyPosterRoot").hidden,
+    ariaHidden: document.getElementById("studyPosterRoot").getAttribute("aria-hidden"),
+    title: document.querySelector(".study-title")?.textContent ?? "",
+  }));
+  assert(merkabaActive.studyOn, "study mode enables");
+  assert(merkabaActive.posterVisible, "poster overlay visible");
+  assert(merkabaActive.ariaHidden === "false", "poster root aria-hidden toggled off when active", merkabaActive.ariaHidden);
+  assert(/Merkaba|Stellated/i.test(merkabaActive.title), "merkaba study title shown", merkabaActive.title);
+  assert(!(await page.evaluate(() => Boolean(document.querySelector("[data-export-marker]")))), "live study poster has no export verification marker");
+
+  await page.select("#studySelect", "dimensional-relationships");
+  await sleep(600);
+  const dimensional = await page.$eval(".study-title", (el) => el.textContent);
+  assert(/Dimensional Relationships/i.test(dimensional), "dimensional study loads");
+
+  // --- Repeated study switches/rebuilds keep shared materials intact ---
+  const materialRegression = await page.evaluate(async () => {
+    const hooks = window.__studyTestHooks;
+    const ctrl = hooks.getStudyController();
+    const edgeUuidBefore = hooks.getSharedMaterialState().edgeUuid;
+    for (let i = 0; i < 10; i += 1) {
+      ctrl.setStudy(i % 2 === 0 ? "merkaba-stellated-octahedron" : "dimensional-relationships");
+      ctrl.sequenceStep = i % 4;
+      ctrl.rebuild();
+      ctrl.syncPosterDOM();
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    const state = hooks.getSharedMaterialState();
+    return {
+      ...state,
+      edgeUuidBefore,
+      lineCount: hooks.countStudyLines(),
+      goldPixels: hooks.sampleStudyLineThickness().goldPixels,
+    };
+  });
+  assert(materialRegression.intact, "shared study materials remain intact after repeated rebuilds");
+  assert(!materialRegression.edgeDisposed, "shared edge LineMaterial not disposed");
+  assert(!materialRegression.faceADisposed, "shared face material not disposed");
+  assert(!materialRegression.vertexDisposed, "shared vertex material not disposed");
+  assert(materialRegression.edgeUuid === materialRegression.edgeUuidBefore, "shared edge material instance preserved");
+  assert(materialRegression.lineCount > 0, "repeated rebuilds still render Line2 geometry", String(materialRegression.lineCount));
+  assert(materialRegression.goldPixels > 0, "shared materials still render after repeated rebuilds", String(materialRegression.goldPixels));
+
+  await page.click("#studyPosterMode");
+  await sleep(300);
+  assert(await page.evaluate(() => document.getElementById("app").classList.contains("study-poster-mode")), "poster mode class applied");
+
+  // --- Repeated resize + single blueprint click (no duplicate handlers) ---
+  await page.select("#studySelect", "merkaba-stellated-octahedron");
+  await sleep(400);
+  await page.evaluate(() => {
+    for (let i = 0; i < 6; i += 1) window.dispatchEvent(new Event("resize"));
+  });
+  await sleep(200);
+  const beforeClick = await page.evaluate(() => window.__studyTestHooks.getStudyController().sequenceStep);
+  await page.click('.study-blueprint-step[data-seq="1"]');
+  await sleep(300);
+  const afterOneClick = await page.evaluate(() => window.__studyTestHooks.getStudyController().sequenceStep);
+  assert(afterOneClick === beforeClick + 1, "blueprint click advances one step after repeated resize", `${beforeClick} -> ${afterOneClick}`);
+
+  // --- Transparent background exit in browser ---
+  await page.evaluate(() => {
+    const hooks = window.__studyTestHooks;
+    const ctrl = hooks.getStudyController();
+    ctrl.exit();
+    hooks.setSceneBackground(null);
+    ctrl.enter("merkaba-stellated-octahedron");
+    ctrl.exit();
+  });
+  const bgRestore = await page.evaluate(() => window.__studyTestHooks.getSceneBackgroundState());
+  assert(bgRestore === "null", "browser study exit restores transparent/null background", bgRestore);
+
+  await page.evaluate(() => {
+    window.__studyTestHooks.getStudyController().enter("merkaba-stellated-octahedron");
+  });
+  await sleep(300);
+
+  // --- High-DPI export restoration (CSS size + drawing buffer) ---
+  const exportRestore = await page.evaluate(async () => {
+    const hooks = window.__studyTestHooks;
+    const before = hooks.getRendererState();
+    const blob = await hooks.exportPosterBlob({ scale: 2 });
+    const after = hooks.getRendererState();
+    return {
+      before,
+      after,
+      blobSize: blob?.size ?? 0,
+      wraps: hooks.countExportWraps(),
+    };
+  });
+  assert(exportRestore.before.cssWidth === exportRestore.after.cssWidth, "export restores CSS width", `${exportRestore.before.cssWidth} vs ${exportRestore.after.cssWidth}`);
+  assert(exportRestore.before.cssHeight === exportRestore.after.cssHeight, "export restores CSS height", `${exportRestore.before.cssHeight} vs ${exportRestore.after.cssHeight}`);
+  assert(exportRestore.before.bufferWidth === exportRestore.after.bufferWidth, "export restores drawing-buffer width", `${exportRestore.before.bufferWidth} vs ${exportRestore.after.bufferWidth}`);
+  assert(exportRestore.before.bufferHeight === exportRestore.after.bufferHeight, "export restores drawing-buffer height", `${exportRestore.before.bufferHeight} vs ${exportRestore.after.bufferHeight}`);
+  assert(Math.abs(exportRestore.before.pixelRatio - exportRestore.after.pixelRatio) < 1e-6, "export restores pixel ratio", `${exportRestore.before.pixelRatio} vs ${exportRestore.after.pixelRatio}`);
+  assert(Math.abs(exportRestore.before.aspect - exportRestore.after.aspect) < 1e-6, "export restores camera aspect");
+  assert(exportRestore.wraps === 0, "export removes temporary wrapper elements", String(exportRestore.wraps));
+  assert(exportRestore.blobSize > 5000, "exported PNG blob has substantial content", String(exportRestore.blobSize));
+
+  // --- Failed-export cleanup ---
+  const failedExport = await page.evaluate(async () => {
+    const hooks = window.__studyTestHooks;
+    const before = hooks.getRendererState();
+    let threw = false;
+    try {
+      await hooks.exportPosterBlob({ scale: 2, forceHtmlCompositeFailure: true });
+    } catch {
+      threw = true;
+    }
+    const after = hooks.getRendererState();
+    return {
+      threw,
+      before,
+      after,
+      wraps: hooks.countExportWraps(),
+    };
+  });
+  assert(!failedExport.threw, "forced HTML composite failure still returns WebGL-only export");
+  assert(failedExport.before.cssWidth === failedExport.after.cssWidth, "failed export restores CSS width");
+  assert(failedExport.before.cssHeight === failedExport.after.cssHeight, "failed export restores CSS height");
+  assert(failedExport.before.bufferWidth === failedExport.after.bufferWidth, "failed export restores drawing-buffer width");
+  assert(failedExport.before.bufferHeight === failedExport.after.bufferHeight, "failed export restores drawing-buffer height");
+  assert(failedExport.wraps === 0, "failed export removes temporary wrapper elements", String(failedExport.wraps));
+
+  // --- Line thickness slider uses LineMaterial and visibly changes rendered lines ---
+  await page.evaluate(() => {
+    const ctrl = window.__studyTestHooks.getStudyController();
+    ctrl.sequenceStep = 3;
+    ctrl.rebuild();
+    ctrl.frameStudy();
+    ctrl.setOptions({ lineWidth: 0.7, showFaces: false, showVertices: false });
+  });
+  await sleep(400);
+  const thinLine = await page.evaluate(() => ({
+    widths: window.__studyTestHooks.getStudyLineWidths(),
+    sample: window.__studyTestHooks.sampleStudyLineThickness(),
+  }));
+  assert(Math.abs(thinLine.widths.edge - 0.7) < 1e-6, "thin line width applied to LineMaterial", String(thinLine.widths.edge));
+  assert(thinLine.sample.goldPixels > 0, "thin study lines render gold pixels", String(thinLine.sample.goldPixels));
+
+  await page.evaluate(() => {
+    window.__studyTestHooks.getStudyController().setOptions({ lineWidth: 4.5 });
+  });
+  await sleep(400);
+  const thickLine = await page.evaluate(() => ({
+    widths: window.__studyTestHooks.getStudyLineWidths(),
+    sample: window.__studyTestHooks.sampleStudyLineThickness(),
+  }));
+  assert(Math.abs(thickLine.widths.edge - 4.5) < 1e-6, "thick line width applied to LineMaterial", String(thickLine.widths.edge));
+  assert(
+    thickLine.sample.span > thinLine.sample.span * 1.25,
+    "line thickness slider visibly increases rendered line span",
+    `thin=${thinLine.sample.span} thick=${thickLine.sample.span}`
+  );
+
+  // --- drawLine/drawCircle honor showGuides ---
+  await page.select("#studySelect", "dimensional-relationships");
+  await sleep(500);
+  const guidesOn = await page.evaluate(() => window.__studyTestHooks.countStudyLines());
+  await page.evaluate(() => {
+    window.__studyTestHooks.getStudyController().setOptions({ showGuides: false });
+  });
+  await sleep(300);
+  const guidesOff = await page.evaluate(() => window.__studyTestHooks.countStudyLines());
+  assert(guidesOff < guidesOn, "disabling showGuides removes guide Line2 instances", `${guidesOn} -> ${guidesOff}`);
+
+  await page.select("#studySelect", "merkaba-stellated-octahedron");
+  await sleep(400);
+
+  // --- Exported PNG includes composited HTML overlay marker + title chrome ---
+  const posterContent = await page.evaluate(async () => {
+    const exportScale = 2;
+    const marker = { top: 8, left: 8, size: 24, r: 255, g: 0, b: 170 };
+    const hooks = window.__studyTestHooks;
+    const blob = await hooks.exportPosterBlob({ scale: exportScale, includeExportMarker: true });
+    const bitmap = await createImageBitmap(blob);
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(bitmap, 0, 0);
+
+    const sampleX = Math.round((marker.left + marker.size / 2) * exportScale);
+    const sampleY = Math.round((marker.top + marker.size / 2) * exportScale);
+    const markerPx = ctx.getImageData(sampleX, sampleY, 1, 1).data;
+    const markerMatch =
+      Math.abs(markerPx[0] - marker.r) <= 40 &&
+      Math.abs(markerPx[1] - marker.g) <= 40 &&
+      Math.abs(markerPx[2] - marker.b) <= 40;
+
+    const headerH = Math.round(bitmap.height * 0.12);
+    const header = ctx.getImageData(0, 0, bitmap.width, headerH);
+    let titleGoldPixels = 0;
+    for (let i = 0; i < header.data.length; i += 4) {
+      const r = header.data[i];
+      const g = header.data[i + 1];
+      const b = header.data[i + 2];
+      if (r > 160 && g > 120 && b < 100) titleGoldPixels += 1;
+    }
+
+    const full = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+    let geometryPixels = 0;
+    for (let i = 0; i < full.data.length; i += 4) {
+      const r = full.data[i];
+      const g = full.data[i + 1];
+      const b = full.data[i + 2];
+      if (r > 12 || g > 12 || b > 12) geometryPixels += 1;
+    }
+
+    bitmap.close();
+    return {
+      markerMatch,
+      markerRgb: [markerPx[0], markerPx[1], markerPx[2]],
+      titleGoldPixels,
+      geometryPixels,
+      blobSize: blob.size,
+      sample: [sampleX, sampleY],
+    };
+  });
+  assert(posterContent.markerMatch, "exported PNG contains composited HTML export marker pixels", posterContent.markerRgb.join(","));
+  assert(posterContent.titleGoldPixels > 20, "exported PNG header contains composited title chrome (gold pixels)", String(posterContent.titleGoldPixels));
+  assert(posterContent.geometryPixels > 10, "exported PNG includes WebGL geometry pixels", String(posterContent.geometryPixels));
+  assert(posterContent.blobSize > 5000, "exported PNG blob is non-trivial", String(posterContent.blobSize));
+  console.log("NOTE: Safari/WebKit poster export was not run in CI (Chrome headless only); manual Safari verification still required.");
+
+  await page.click("#studyPosterMode");
+  await sleep(200);
+  await page.click("#studyModeEnabled");
+  await sleep(500);
+  const restored = await page.evaluate(() => ({
+    studyOff: !document.getElementById("studyModeEnabled").checked,
+    ariaHidden: document.getElementById("studyPosterRoot").getAttribute("aria-hidden"),
+  }));
+  assert(restored.studyOff, "study mode can be disabled");
+  assert(restored.ariaHidden === "true", "poster root aria-hidden restored on exit", restored.ariaHidden);
+
+  assert(errors.length === 0, "browser study test has no runtime errors", errors[0]);
+  await browser.close();
+} finally {
+  preview.kill("SIGTERM");
+}
+
+if (failed > 0) {
+  console.error(`\n${failed} geometry-study assertion(s) failed`);
+  process.exit(1);
+}
+
+console.log("\nAll geometry study checks passed.");
+
+async function run(command, args) {
+  await new Promise((resolve, reject) => {
+    const proc = spawn(command, args, { cwd: root, stdio: "inherit" });
+    proc.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`${command} exited ${code}`))));
+  });
+}
+
+async function ensurePuppeteer() {
+  const require = createRequire(import.meta.url);
+  try {
+    return require("puppeteer-core");
+  } catch {
+    await run("npm", ["install", "--no-save", "puppeteer-core@24"]);
+    return createRequire(import.meta.url)("puppeteer-core");
+  }
+}
+
+async function waitForServer(url) {
+  for (let i = 0; i < 80; i += 1) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return;
+    } catch {
+      // waiting
+    }
+    await sleep(250);
+  }
+  throw new Error(`Server did not start at ${url}`);
+}

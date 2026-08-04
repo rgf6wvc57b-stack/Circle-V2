@@ -1,0 +1,285 @@
+import * as THREE from "three";
+import { Line2 } from "three/addons/lines/Line2.js";
+import { LineGeometry } from "three/addons/lines/LineGeometry.js";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+import { DEFAULT_STUDY_RENDER_OPTIONS, POSTER_PALETTE } from "./studyPalette.js";
+
+/**
+ * @typedef {Partial<typeof DEFAULT_STUDY_RENDER_OPTIONS>} StudyRenderOptions
+ */
+
+/**
+ * Renders polyhedron specs into a Three.js group with gold poster styling.
+ */
+export class StudySceneRenderer {
+  /**
+   * @param {THREE.Group} root
+   * @param {StudyRenderOptions} [options]
+   */
+  constructor(root, options = {}) {
+    this.root = root;
+    this.options = { ...options };
+    this.lineResolution = new THREE.Vector2(
+      typeof window !== "undefined" ? window.innerWidth : 800,
+      typeof window !== "undefined" ? window.innerHeight : 600
+    );
+    this.materials = this.#createMaterials();
+    this.setOptions(this.options);
+  }
+
+  #hexColor(hex) {
+    return Number.parseInt(String(hex).replace("#", ""), 16);
+  }
+
+  #createLineMaterial(colorHex, opacity, widthScale = 1) {
+    return new LineMaterial({
+      color: this.#hexColor(colorHex),
+      transparent: true,
+      opacity,
+      linewidth: (this.options.lineWidth ?? DEFAULT_STUDY_RENDER_OPTIONS.lineWidth) * widthScale,
+      worldUnits: false,
+      resolution: this.lineResolution.clone(),
+      depthWrite: false,
+    });
+  }
+
+  #createMaterials() {
+    return {
+      edge: this.#createLineMaterial(POSTER_PALETTE.goldLine, 0.95, 1),
+      internal: this.#createLineMaterial(POSTER_PALETTE.goldDim, 0.45, 0.85),
+      guide: this.#createLineMaterial(POSTER_PALETTE.goldDim, 0.35, 0.75),
+      faceA: new THREE.MeshBasicMaterial({
+        color: POSTER_PALETTE.tetraA,
+        transparent: true,
+        opacity: POSTER_PALETTE.faceAlpha,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+      faceB: new THREE.MeshBasicMaterial({
+        color: POSTER_PALETTE.tetraB,
+        transparent: true,
+        opacity: POSTER_PALETTE.faceAlpha,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+      faceNeutral: new THREE.MeshBasicMaterial({
+        color: POSTER_PALETTE.accentPurple,
+        transparent: true,
+        opacity: POSTER_PALETTE.faceAlpha,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+      vertex: new THREE.MeshStandardMaterial({
+        color: POSTER_PALETTE.gold,
+        emissive: POSTER_PALETTE.sphereEmissive,
+        emissiveIntensity: 0.45,
+        metalness: 0.35,
+        roughness: 0.35,
+        transparent: true,
+        opacity: 0.92,
+      }),
+      vertexEmphasis: new THREE.MeshStandardMaterial({
+        color: POSTER_PALETTE.textPrimary,
+        emissive: POSTER_PALETTE.gold,
+        emissiveIntensity: 0.65,
+        metalness: 0.4,
+        roughness: 0.25,
+      }),
+    };
+  }
+
+  setResolution(width, height) {
+    this.lineResolution.set(width, height);
+    ["edge", "internal", "guide"].forEach((key) => {
+      this.materials[key].resolution.set(width, height);
+    });
+  }
+
+  setOptions(partial) {
+    Object.assign(this.options, partial);
+    this.materials.faceA.opacity = this.options.faceOpacity ?? POSTER_PALETTE.faceAlpha;
+    this.materials.faceB.opacity = this.options.faceOpacity ?? POSTER_PALETTE.faceAlpha;
+    this.materials.faceNeutral.opacity = this.options.faceOpacity ?? POSTER_PALETTE.faceAlpha;
+    const lineWidth = this.options.lineWidth ?? DEFAULT_STUDY_RENDER_OPTIONS.lineWidth;
+    this.materials.edge.linewidth = lineWidth;
+    this.materials.internal.linewidth = lineWidth * 0.85;
+    this.materials.guide.linewidth = lineWidth * 0.75;
+  }
+
+  getLineWidths() {
+    return {
+      edge: this.materials.edge.linewidth,
+      internal: this.materials.internal.linewidth,
+      guide: this.materials.guide.linewidth,
+    };
+  }
+
+  #lineVisible(materialKey) {
+    if (materialKey === "guide") return this.options.showGuides !== false;
+    if (materialKey === "internal") {
+      return this.options.showEdges !== false && this.options.showInternal !== false;
+    }
+    return this.options.showEdges !== false;
+  }
+
+  #addLine2(points, materialKey, name, renderOrder = 5) {
+    const geo = new LineGeometry();
+    geo.setPositions(points.flatMap((p) => [p.x, p.y, p.z]));
+    const mat = this.materials[materialKey] ?? this.materials.edge;
+    const line = new Line2(geo, mat);
+    line.computeLineDistances();
+    line.name = name;
+    line.renderOrder = renderOrder;
+    return line;
+  }
+
+  #getSharedMaterials() {
+    return new Set(Object.values(this.materials));
+  }
+
+  /** @returns {boolean} True when shared materials were not disposed by clear(). */
+  areSharedMaterialsIntact() {
+    return Object.values(this.materials).every((material) => !material.disposed);
+  }
+
+  clear() {
+    const sharedMaterials = this.#getSharedMaterials();
+    while (this.root.children.length) {
+      const child = this.root.children[0];
+      this.root.remove(child);
+      child.traverse((node) => {
+        node.geometry?.dispose?.();
+        if (!node.material) return;
+        const materials = Array.isArray(node.material) ? node.material : [node.material];
+        materials.forEach((material) => {
+          if (!sharedMaterials.has(material)) material.dispose?.();
+        });
+      });
+    }
+  }
+
+  /**
+   * @param {import("../geometry/primitives/polyhedron.js").PolyhedronSpec} spec
+   * @param {object} opts
+   */
+  drawPolyhedron(spec, opts = {}) {
+    const {
+      scale = 1,
+      position = [0, 0, 0],
+      faceMaterial = "faceNeutral",
+      edgeMaterial = "edge",
+      vertexIndices = null,
+      emphasisIndices = [],
+      name = spec.id,
+    } = opts;
+    const group = new THREE.Group();
+    group.name = name;
+    group.position.set(position[0], position[1], position[2]);
+    group.scale.setScalar(scale);
+
+    const verts = spec.vertices.map((v) => new THREE.Vector3(v[0], v[1], v[2]));
+
+    if (this.options.showFaces !== false && spec.triFaces?.length) {
+      spec.triFaces.forEach((face, fi) => {
+        const geometry = new THREE.BufferGeometry();
+        const [a, b, c] = face;
+        geometry.setFromPoints([verts[a], verts[b], verts[c]]);
+        geometry.setIndex([0, 1, 2]);
+        geometry.computeVertexNormals();
+        const matKey = fi < spec.triFaces.length / 2 ? faceMaterial : "faceB";
+        const mesh = new THREE.Mesh(geometry, this.materials[matKey] ?? this.materials.faceNeutral);
+        mesh.name = `${name}-face-${fi}`;
+        mesh.renderOrder = 1;
+        group.add(mesh);
+      });
+    }
+
+    if (this.options.showFaces !== false && spec.quadFaces?.length) {
+      spec.quadFaces.forEach((face, fi) => {
+        const geometry = new THREE.BufferGeometry();
+        const [a, b, c, d] = face;
+        geometry.setFromPoints([verts[a], verts[b], verts[c], verts[d]]);
+        geometry.setIndex([0, 1, 2, 0, 2, 3]);
+        geometry.computeVertexNormals();
+        const mesh = new THREE.Mesh(geometry, this.materials[faceMaterial] ?? this.materials.faceNeutral);
+        mesh.name = `${name}-quad-${fi}`;
+        mesh.renderOrder = 1;
+        group.add(mesh);
+      });
+    }
+
+    if (this.#lineVisible(edgeMaterial)) {
+      spec.edges.forEach(([a, b], ei) => {
+        const matKey = edgeMaterial === "internal" ? "internal" : "edge";
+        const line = this.#addLine2([verts[a], verts[b]], matKey, `${name}-edge-${ei}`);
+        group.add(line);
+      });
+    }
+
+    if (this.options.showVertices !== false) {
+      const indices = vertexIndices ?? verts.map((_, i) => i);
+      const sphereR = 0.055 * (this.options.sphereScale ?? 1) * (this.options.vertexScale ?? 1);
+      indices.forEach((i) => {
+        const mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(sphereR, 20, 20),
+          emphasisIndices.includes(i) ? this.materials.vertexEmphasis : this.materials.vertex
+        );
+        mesh.position.copy(verts[i]);
+        mesh.name = `${name}-vertex-${i}`;
+        mesh.renderOrder = 10;
+        group.add(mesh);
+      });
+    }
+
+    this.root.add(group);
+    return group;
+  }
+
+  drawCircle(center, radius, segments = 96, opts = {}) {
+    const { plane = "xy", material = "guide", name = "circle" } = opts;
+    if (!this.#lineVisible(material)) return null;
+
+    const curve = new THREE.EllipseCurve(0, 0, radius, radius, 0, Math.PI * 2, false, 0);
+    const points2 = curve.getPoints(segments);
+    const points3 = points2.map((p) => {
+      if (plane === "xy") return new THREE.Vector3(p.x + center[0], p.y + center[1], center[2]);
+      return new THREE.Vector3(p.x + center[0], center[1], p.y + center[2]);
+    });
+    const matKey = material === "edge" ? "edge" : material === "internal" ? "internal" : "guide";
+    const line = this.#addLine2(points3, matKey, name, 4);
+    this.root.add(line);
+    return line;
+  }
+
+  drawLine(a, b, opts = {}) {
+    const { material = "edge", name = "line" } = opts;
+    if (!this.#lineVisible(material)) return null;
+
+    const matKey = material === "guide" ? "guide" : material === "internal" ? "internal" : "edge";
+    const line = this.#addLine2(
+      [new THREE.Vector3(...a), new THREE.Vector3(...b)],
+      matKey,
+      name
+    );
+    this.root.add(line);
+    return line;
+  }
+
+  drawAxes(length = 2) {
+    const axes = [
+      { color: 0xff5555, from: [-length, 0, 0], to: [length, 0, 0] },
+      { color: 0x55dd88, from: [0, -length, 0], to: [0, length, 0] },
+      { color: 0x5588ff, from: [0, 0, -length], to: [0, 0, length] },
+    ];
+    axes.forEach((axis) => {
+      const geometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(...axis.from),
+        new THREE.Vector3(...axis.to),
+      ]);
+      const material = new THREE.LineBasicMaterial({ color: axis.color, transparent: true, opacity: 0.55 });
+      const line = new THREE.Line(geometry, material);
+      line.name = `axis-${axis.color}`;
+      this.root.add(line);
+    });
+  }
+}

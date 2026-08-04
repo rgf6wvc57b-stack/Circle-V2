@@ -78,6 +78,8 @@ import {
   getSheetState,
   bindSheetHandle,
 } from "./app/mobileSheet.js";
+import { StudyController } from "./studies/StudyController.js";
+import { bindStudyControls } from "./app/studyModeUI.js";
 const canvas = document.getElementById("viewport");
 const appRoot = document.getElementById("app");
 
@@ -798,12 +800,42 @@ scene.add(worldGrid);
 const designGroup = new THREE.Group();
 scene.add(designGroup);
 
+const studyGroup = new THREE.Group();
+studyGroup.name = "studyGeometry";
+studyGroup.visible = false;
+scene.add(studyGroup);
+
 /** Exploration overlays stay outside designGroup so exports remain geometry-only. */
 const explorationRoot = new THREE.Group();
 explorationRoot.name = "explorationRoot";
 scene.add(explorationRoot);
 
 const engine = new ConstructionEngine(designGroup);
+
+const studyController = new StudyController({
+  renderer: webgl,
+  scene,
+  cameraController,
+  posterRoot: document.getElementById("studyPosterRoot"),
+  appRoot,
+  panel: document.getElementById("panel"),
+  studyGroup,
+});
+
+function syncStudyVisibility() {
+  const studyOn = studyController.isActive();
+  designGroup.visible = !studyOn;
+  studyGroup.visible = studyOn;
+  if (studyOn) {
+    floor.visible = false;
+    worldGrid.visible = false;
+  } else {
+    const hideWorld =
+      ui.renderMode === "constructionPlane" || ui.constructionMode || ui.evolutionMode;
+    floor.visible = !hideWorld;
+    worldGrid.visible = !hideWorld;
+  }
+}
 const player = engine.player;
 
 const evolution = new EvolutionController({
@@ -885,10 +917,7 @@ function downloadString(text, filename) {
 }
 
 function syncWorldDecor() {
-  const hideWorld =
-    ui.renderMode === "constructionPlane" || ui.constructionMode || ui.evolutionMode;
-  floor.visible = !hideWorld;
-  worldGrid.visible = !hideWorld;
+  syncStudyVisibility();
 }
 
 function syncEvolutionUI() {
@@ -2213,11 +2242,25 @@ function bindControls() {
       ui.panelOpen = getSheetState() !== SHEET_STATE.COLLAPSED;
       if (guidedTutorial?.isActive?.() && isMobileTutorialLayout()) {
         frameTutorialGeometry({ animate: true, duration: 0.45 });
+      } else if (studyController.isActive()) {
+        studyController.frameStudy();
       } else {
         frameActiveConstruction({ animate: true, duration: 0.45 });
       }
       guidedTutorial?.reposition();
     },
+  });
+
+  bindStudyControls(studyController, {
+    onStudyEnter: () => {
+      syncStudyVisibility();
+      studyController.frameStudy();
+    },
+    onStudyExit: () => {
+      syncStudyVisibility();
+      frameActiveConstruction({ animate: false });
+    },
+    syncWorldDecor,
   });
 }
 focusSystem.onChange = (sel) => {
@@ -2250,6 +2293,7 @@ function onViewportResize() {
 
   displayOverlays.setSize(w, h);
   measurementMode.setResolution(w, h);
+  studyController.studyRenderer.setResolution(w, h);
   
   syncViewLayout();
   positionRendererPopover();
@@ -2306,6 +2350,12 @@ function animate() {
     evolution.update(dt);
   } catch (error) {
     console.error("Evolution update failed:", error);
+  }
+
+  try {
+    studyController.update(dt);
+  } catch (error) {
+    console.error("Study update failed:", error);
   }
 
   try {
@@ -2402,5 +2452,87 @@ if (getShowIntroOnOpen()) {
 } else {
   setIntroOpen(false);
 }
+
+window.__studyTestHooks = {
+  getStudyController: () => studyController,
+  getRendererState: () => {
+    const cssSize = new THREE.Vector2();
+    webgl.getSize(cssSize);
+    const el = webgl.domElement;
+    return {
+      cssWidth: cssSize.x,
+      cssHeight: cssSize.y,
+      bufferWidth: el.width,
+      bufferHeight: el.height,
+      pixelRatio: webgl.getPixelRatio(),
+      aspect: cameraController.getActiveCamera().aspect,
+    };
+  },
+  setSceneBackground: (value) => {
+    scene.background = value;
+  },
+  getSceneBackground: () => scene.background,
+  getSceneBackgroundState: () => (scene.background === null ? "null" : "color"),
+  getSceneFog: () => scene.fog,
+  exportPosterBlob: (opts) =>
+    studyController.exportPoster({
+      scale: opts?.scale ?? 2,
+      download: false,
+      forceHtmlCompositeFailure: opts?.forceHtmlCompositeFailure ?? false,
+      includeExportMarker: opts?.includeExportMarker ?? false,
+    }),
+  getStudyLineWidths: () => studyController.studyRenderer.getLineWidths(),
+  sampleStudyLineThickness: () => {
+    webgl.render(scene, cameraController.getActiveCamera());
+    const canvas = webgl.domElement;
+    const w = canvas.width;
+    const h = canvas.height;
+    const row = Math.floor(h * 0.5);
+    const copy = document.createElement("canvas");
+    copy.width = w;
+    copy.height = h;
+    const ctx = copy.getContext("2d");
+    if (!ctx) return { span: 0, goldPixels: 0 };
+    ctx.drawImage(canvas, 0, 0);
+    const image = ctx.getImageData(0, row, w, 1).data;
+    let maxSpan = 0;
+    let currentSpan = 0;
+    let goldPixels = 0;
+    for (let x = 0; x < w; x += 1) {
+      const i = x * 4;
+      const r = image[i];
+      const g = image[i + 1];
+      const b = image[i + 2];
+      const isGold = r > 140 && g > 100 && b < 120;
+      if (isGold) {
+        goldPixels += 1;
+        currentSpan += 1;
+        maxSpan = Math.max(maxSpan, currentSpan);
+      } else {
+        currentSpan = 0;
+      }
+    }
+    return { span: maxSpan, goldPixels };
+  },
+  countStudyLines: () => {
+    let count = 0;
+    studyGroup.traverse((node) => {
+      if (node.isLine2) count += 1;
+    });
+    return count;
+  },
+  getSharedMaterialState: () => {
+    const materials = studyController.studyRenderer.materials;
+    return {
+      intact: studyController.studyRenderer.areSharedMaterialsIntact(),
+      edgeDisposed: Boolean(materials.edge.disposed),
+      faceADisposed: Boolean(materials.faceA.disposed),
+      vertexDisposed: Boolean(materials.vertex.disposed),
+      edgeUuid: materials.edge.uuid,
+    };
+  },
+  countExportWraps: () =>
+    document.querySelectorAll("[data-poster-export-wrap]").length,
+};
 
 animate();
