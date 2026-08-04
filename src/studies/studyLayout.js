@@ -28,6 +28,8 @@ export function isStudyFullFrameLayout({ posterMode = false, exporting = false }
  * @returns {{
  *   rect: ReturnType<typeof computeAvailableViewRect>,
  *   insets: {
+ *     insetTop: number,
+ *     insetLeft: number,
  *     insetRight: number,
  *     insetBottom: number,
  *     availableWidth: number,
@@ -64,6 +66,8 @@ export function computeStudyViewLayout({
         layout: "full",
       },
       insets: {
+        insetTop: 0,
+        insetLeft: 0,
         insetRight: 0,
         insetBottom: 0,
         availableWidth: W,
@@ -89,6 +93,8 @@ export function computeStudyViewLayout({
   return {
     rect,
     insets: {
+      insetTop: rect.y,
+      insetLeft: rect.x,
       insetRight,
       insetBottom,
       availableWidth: rect.width,
@@ -112,7 +118,9 @@ export function computeStudyPosterInsets(opts) {
  */
 export function applyStudyPosterInsets(appRoot, insets) {
   if (!appRoot) return;
-  const { insetRight, insetBottom, layout } = insets;
+  const { insetTop = 0, insetLeft = 0, insetRight, insetBottom, layout } = insets;
+  appRoot.style.setProperty("--study-panel-inset-top", `${Math.round(insetTop)}px`);
+  appRoot.style.setProperty("--study-panel-inset-left", `${Math.round(insetLeft)}px`);
   appRoot.style.setProperty("--study-panel-inset-right", `${Math.round(insetRight)}px`);
   appRoot.style.setProperty("--study-panel-inset-bottom", `${Math.round(insetBottom)}px`);
   appRoot.classList.toggle("study-panel-right", layout === "right" && insetRight > 8);
@@ -125,6 +133,8 @@ export function applyStudyPosterInsets(appRoot, insets) {
  */
 export function clearStudyPosterInsets(appRoot) {
   if (!appRoot) return;
+  appRoot.style.removeProperty("--study-panel-inset-top");
+  appRoot.style.removeProperty("--study-panel-inset-left");
   appRoot.style.removeProperty("--study-panel-inset-right");
   appRoot.style.removeProperty("--study-panel-inset-bottom");
   appRoot.classList.remove("study-panel-right", "study-panel-bottom", "study-full-frame", "study-poster-exporting");

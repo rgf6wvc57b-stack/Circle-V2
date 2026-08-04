@@ -2606,12 +2606,46 @@ window.__studyTestHooks = {
     const app = document.getElementById("app");
     const cs = app ? getComputedStyle(app) : getComputedStyle(document.documentElement);
     return {
+      insetTop: parseFloat(cs.getPropertyValue("--study-panel-inset-top")) || 0,
+      insetLeft: parseFloat(cs.getPropertyValue("--study-panel-inset-left")) || 0,
       insetRight: parseFloat(cs.getPropertyValue("--study-panel-inset-right")) || 0,
       insetBottom: parseFloat(cs.getPropertyValue("--study-panel-inset-bottom")) || 0,
       panelRight: app?.classList.contains("study-panel-right") ?? false,
       panelBottom: app?.classList.contains("study-panel-bottom") ?? false,
       fullFrame: app?.classList.contains("study-full-frame") ?? false,
     };
+  },
+  getPosterRootRect: () => {
+    const el = document.querySelector(".study-poster-root");
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    return {
+      top: r.top,
+      left: r.left,
+      right: r.right,
+      bottom: r.bottom,
+      width: r.width,
+      height: r.height,
+      cssTop: style.top,
+      cssLeft: style.left,
+      cssRight: style.right,
+      cssBottom: style.bottom,
+    };
+  },
+  setSafeAreaInsets: ({ top = 0, right = 0, bottom = 0, left = 0 } = {}) => {
+    const root = document.documentElement;
+    root.style.setProperty("--sat", `${top}px`);
+    root.style.setProperty("--sar", `${right}px`);
+    root.style.setProperty("--sab", `${bottom}px`);
+    root.style.setProperty("--sal", `${left}px`);
+  },
+  clearSafeAreaInsets: () => {
+    const root = document.documentElement;
+    root.style.removeProperty("--sat");
+    root.style.removeProperty("--sar");
+    root.style.removeProperty("--sab");
+    root.style.removeProperty("--sal");
   },
   getCameraAvailableRect: () => {
     const layout = cameraController._viewLayout;

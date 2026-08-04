@@ -1,7 +1,7 @@
 .study-poster-root {
   position: absolute;
-  top: 0;
-  left: 0;
+  top: var(--study-panel-inset-top, var(--sat, 0px));
+  left: var(--study-panel-inset-left, var(--sal, 0px));
   right: var(--study-panel-inset-right, 0px);
   bottom: var(--study-panel-inset-bottom, 0px);
   pointer-events: none;
@@ -37,8 +37,10 @@
 }
 
 #app.study-poster-exporting .study-poster-root {
+  top: 0;
   right: 0;
   bottom: 0;
+  left: 0;
 }
 
 #app.study-poster-mode .menu-toggle,
@@ -50,13 +52,17 @@
 }
 
 #app.study-poster-mode .study-poster-root {
+  top: 0;
   right: 0;
   bottom: 0;
+  left: 0;
 }
 
 #app.study-full-frame .study-poster-root {
+  top: 0;
   right: 0;
   bottom: 0;
+  left: 0;
 }
 
 #app.study-active #viewport {
@@ -119,6 +125,7 @@
 
 .study-poster-dimensional .study-center-slot {
   grid-row: 1;
+  min-height: 42vh;
   min-height: min(42vh, 52dvh);
 }
 

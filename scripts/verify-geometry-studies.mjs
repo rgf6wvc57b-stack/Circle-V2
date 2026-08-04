@@ -80,6 +80,9 @@ assert(/showGuides/.test(studyRendererSrc), "study renderer honors showGuides fo
 
 const posterCss = readFileSync(join(root, "src/styles/poster.css"), "utf8");
 assert(/--study-panel-inset-right/.test(posterCss), "poster CSS reserves panel inset via custom property");
+assert(/--study-panel-inset-top/.test(posterCss) || /var\(--sat/.test(posterCss), "poster CSS aligns top with safe-area inset");
+assert(/study-full-frame .study-poster-root[\s\S]*top:\s*0/.test(posterCss), "full-frame poster root resets top to 0");
+assert(/min-height:\s*42vh/.test(posterCss), "dimensional center slot has vh fallback before dvh");
 assert(/study-poster-dimensional .study-info/.test(posterCss), "dimensional study-info has explicit grid placement");
 assert(/study-poster-exporting/.test(posterCss), "poster export hides control panel");
 assert(/\.study-blueprint-step\.active/.test(posterCss), "blueprint active step styling present");
@@ -121,6 +124,17 @@ assert(/\.study-blueprint-step\.active/.test(posterCss), "blueprint active step 
   });
   assert(safeAreaExport.rect.width === 1179 && safeAreaExport.rect.height === 2556, "full-frame export ignores safe-area clipping");
   assert(safeAreaExport.rect.x === 0 && safeAreaExport.rect.y === 0, "full-frame export rect starts at origin");
+  const safeAreaNormal = computeStudyViewLayout({
+    fullWidth: 1179,
+    fullHeight: 2556,
+    panelOpen: false,
+    posterMode: false,
+    exporting: false,
+    safeArea: { top: 59, right: 0, bottom: 34, left: 21 },
+  });
+  assert(safeAreaNormal.insets.insetTop === 59, "normal study reserves top safe-area inset", String(safeAreaNormal.insets.insetTop));
+  assert(safeAreaNormal.insets.insetLeft === 21, "normal study reserves left safe-area inset", String(safeAreaNormal.insets.insetLeft));
+  assert(safeAreaNormal.rect.x === 21 && safeAreaNormal.rect.y === 59, "camera rect starts at safe-area origin");
 }
 
 // --- Node: transparent/null background restore on study exit ---
@@ -620,6 +634,80 @@ try {
   const panelCallouts = await page.evaluate(() => window.__studyTestHooks.getCalloutVisibility());
   assert(!panelCallouts.visible, "dimensional callouts hidden when right panel is open", JSON.stringify(panelCallouts));
 
+  // --- Safe-area alignment: normal study vs poster/export full frame ---
+  const iphoneSafe = { top: 59, right: 0, bottom: 34, left: 21 };
+  await page.setViewport({ width: 1179, height: 2556, deviceScaleFactor: 1 });
+  await page.evaluate((safe) => {
+    window.__studyTestHooks.setSafeAreaInsets(safe);
+    const cb = document.getElementById("studyPosterMode");
+    if (cb.checked) cb.click();
+    window.__studyTestHooks.setPanelOpen(false);
+    window.dispatchEvent(new Event("resize"));
+    window.__studyTestHooks.syncStudyViewLayout();
+    window.__studyTestHooks.getStudyController().frameStudy();
+  }, iphoneSafe);
+  await sleep(400);
+  const safeAreaNormal = await page.evaluate(() => {
+    const camera = window.__studyTestHooks.getCameraAvailableRect();
+    const poster = window.__studyTestHooks.getPosterRootRect();
+    const insets = window.__studyTestHooks.getStudyPosterInsets();
+    return { camera, poster, insets };
+  });
+  assert(safeAreaNormal.insets.insetTop === iphoneSafe.top, "CSS top inset matches iPhone safe area", String(safeAreaNormal.insets.insetTop));
+  assert(safeAreaNormal.insets.insetLeft === iphoneSafe.left, "CSS left inset matches iPhone safe area", String(safeAreaNormal.insets.insetLeft));
+  assert(
+    Math.abs(safeAreaNormal.poster.top - safeAreaNormal.camera.y) < 2,
+    "poster overlay top aligns with camera available rect",
+    `poster=${safeAreaNormal.poster?.top} camera=${safeAreaNormal.camera?.y}`
+  );
+  assert(
+    Math.abs(safeAreaNormal.poster.left - safeAreaNormal.camera.x) < 2,
+    "poster overlay left aligns with camera available rect",
+    `poster=${safeAreaNormal.poster?.left} camera=${safeAreaNormal.camera?.x}`
+  );
+
+  await page.evaluate(() => {
+    const cb = document.getElementById("studyPosterMode");
+    if (!cb.checked) cb.click();
+    window.dispatchEvent(new Event("resize"));
+    window.__studyTestHooks.syncStudyViewLayout();
+    window.__studyTestHooks.getStudyController().frameStudy();
+  });
+  await sleep(400);
+  const safeAreaPosterMode = await page.evaluate(() => {
+    const camera = window.__studyTestHooks.getCameraAvailableRect();
+    const poster = window.__studyTestHooks.getPosterRootRect();
+    const insets = window.__studyTestHooks.getStudyPosterInsets();
+    return {
+      camera,
+      poster,
+      insets,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+    };
+  });
+  assert(safeAreaPosterMode.insets.fullFrame, "poster mode uses full-frame layout with mocked safe area");
+  assert(safeAreaPosterMode.poster.top < 1 && safeAreaPosterMode.poster.left < 1, "poster mode overlay starts at viewport origin", JSON.stringify(safeAreaPosterMode.poster));
+  assert(safeAreaPosterMode.camera.x < 1 && safeAreaPosterMode.camera.y < 1, "poster mode camera rect starts at origin");
+  assert(
+    Math.abs(safeAreaPosterMode.camera.width - safeAreaPosterMode.innerWidth) < 2,
+    "poster mode camera uses full viewport width with safe area mocked",
+    String(safeAreaPosterMode.camera.width)
+  );
+
+  await page.evaluate(() => {
+    const cb = document.getElementById("studyPosterMode");
+    if (cb.checked) cb.click();
+    window.__studyTestHooks.clearSafeAreaInsets();
+    window.dispatchEvent(new Event("resize"));
+    window.__studyTestHooks.syncStudyViewLayout();
+    window.__studyTestHooks.getStudyController().frameStudy();
+  });
+  await sleep(200);
+  await page.setViewport({ width: 2048, height: 1536, deviceScaleFactor: 1 });
+  await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+  await sleep(200);
+
   // Blueprint step styling remains distinct
   await page.select("#studySelect", "merkaba-stellated-octahedron");
   await sleep(400);
@@ -628,7 +716,13 @@ try {
   assert(blueprintStyles.hasInactive, "merkaba blueprint has inactive steps");
   assert(blueprintStyles.activeDiffers, "active blueprint step is visually distinct", JSON.stringify(blueprintStyles));
   await sleep(200);
-  await page.click("#studyModeEnabled");
+  await page.evaluate(() => {
+    const cb = document.getElementById("studyModeEnabled");
+    if (cb.checked) {
+      cb.checked = false;
+      cb.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  });
   await sleep(500);
   const restored = await page.evaluate(() => ({
     studyOff: !document.getElementById("studyModeEnabled").checked,
