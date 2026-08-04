@@ -60,6 +60,8 @@ assert(/studyGroup/.test(main), "study group added to scene");
 const posterExportSrc = readFileSync(join(root, "src/export/posterExport.js"), "utf8");
 assert(/finally\s*\{/.test(posterExportSrc), "poster export uses finally cleanup");
 assert(/URL\.revokeObjectURL/.test(posterExportSrc), "poster export revokes object URLs");
+assert(/renderer\.getSize\(/.test(posterExportSrc), "poster export saves CSS dimensions via renderer.getSize()");
+assert(/data-export-marker/.test(readFileSync(join(root, "src/studies/StudyController.js"), "utf8")), "poster HTML includes deterministic export marker");
 
 // --- Node: transparent/null background restore on study exit ---
 {
@@ -123,6 +125,7 @@ try {
     args: ["--no-sandbox", "--disable-dev-shm-usage", "--enable-unsafe-swiftshader"],
   });
   const page = await browser.newPage();
+  await page.setViewport({ width: 800, height: 600, deviceScaleFactor: 2 });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.evaluateOnNewDocument(() => {
@@ -131,6 +134,21 @@ try {
   });
   await page.goto(base, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForFunction(() => window.__studyTestHooks, { timeout: 15000 });
+  await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+  await sleep(400);
+
+  const initialRenderer = await page.evaluate(() => window.__studyTestHooks.getRendererState());
+  assert(initialRenderer.pixelRatio === 2, "high-DPI page uses deviceScaleFactor 2", String(initialRenderer.pixelRatio));
+  assert(
+    initialRenderer.bufferWidth === Math.round(initialRenderer.cssWidth * initialRenderer.pixelRatio),
+    "drawing buffer width matches CSS width × pixel ratio",
+    `${initialRenderer.bufferWidth} vs ${initialRenderer.cssWidth}×${initialRenderer.pixelRatio}`
+  );
+  assert(
+    initialRenderer.bufferHeight === Math.round(initialRenderer.cssHeight * initialRenderer.pixelRatio),
+    "drawing buffer height matches CSS height × pixel ratio",
+    `${initialRenderer.bufferHeight} vs ${initialRenderer.cssHeight}×${initialRenderer.pixelRatio}`
+  );
 
   await page.click("#studyModeEnabled");
   await sleep(800);
@@ -184,7 +202,7 @@ try {
   });
   await sleep(300);
 
-  // --- High-DPI export restoration ---
+  // --- High-DPI export restoration (CSS size + drawing buffer) ---
   const exportRestore = await page.evaluate(async () => {
     const hooks = window.__studyTestHooks;
     const before = hooks.getRendererState();
@@ -197,9 +215,11 @@ try {
       wraps: hooks.countExportWraps(),
     };
   });
-  assert(exportRestore.before.width === exportRestore.after.width, "export restores renderer width", `${exportRestore.before.width} vs ${exportRestore.after.width}`);
-  assert(exportRestore.before.height === exportRestore.after.height, "export restores renderer height", `${exportRestore.before.height} vs ${exportRestore.after.height}`);
-  assert(Math.abs(exportRestore.before.pixelRatio - exportRestore.after.pixelRatio) < 1e-6, "export restores pixel ratio");
+  assert(exportRestore.before.cssWidth === exportRestore.after.cssWidth, "export restores CSS width", `${exportRestore.before.cssWidth} vs ${exportRestore.after.cssWidth}`);
+  assert(exportRestore.before.cssHeight === exportRestore.after.cssHeight, "export restores CSS height", `${exportRestore.before.cssHeight} vs ${exportRestore.after.cssHeight}`);
+  assert(exportRestore.before.bufferWidth === exportRestore.after.bufferWidth, "export restores drawing-buffer width", `${exportRestore.before.bufferWidth} vs ${exportRestore.after.bufferWidth}`);
+  assert(exportRestore.before.bufferHeight === exportRestore.after.bufferHeight, "export restores drawing-buffer height", `${exportRestore.before.bufferHeight} vs ${exportRestore.after.bufferHeight}`);
+  assert(Math.abs(exportRestore.before.pixelRatio - exportRestore.after.pixelRatio) < 1e-6, "export restores pixel ratio", `${exportRestore.before.pixelRatio} vs ${exportRestore.after.pixelRatio}`);
   assert(Math.abs(exportRestore.before.aspect - exportRestore.after.aspect) < 1e-6, "export restores camera aspect");
   assert(exportRestore.wraps === 0, "export removes temporary wrapper elements", String(exportRestore.wraps));
   assert(exportRestore.blobSize > 5000, "exported PNG blob has substantial content", String(exportRestore.blobSize));
@@ -223,8 +243,10 @@ try {
     };
   });
   assert(!failedExport.threw, "forced HTML composite failure still returns WebGL-only export");
-  assert(failedExport.before.width === failedExport.after.width, "failed export restores renderer width");
-  assert(failedExport.before.height === failedExport.after.height, "failed export restores renderer height");
+  assert(failedExport.before.cssWidth === failedExport.after.cssWidth, "failed export restores CSS width");
+  assert(failedExport.before.cssHeight === failedExport.after.cssHeight, "failed export restores CSS height");
+  assert(failedExport.before.bufferWidth === failedExport.after.bufferWidth, "failed export restores drawing-buffer width");
+  assert(failedExport.before.bufferHeight === failedExport.after.bufferHeight, "failed export restores drawing-buffer height");
   assert(failedExport.wraps === 0, "failed export removes temporary wrapper elements", String(failedExport.wraps));
 
   // --- Line thickness slider wired through StudySceneRenderer ---
@@ -236,16 +258,37 @@ try {
   const lineWidth = await page.evaluate(() => window.__studyTestHooks.getStudyController().options.lineWidth);
   assert(Math.abs(lineWidth - 2.5) < 1e-6, "line thickness slider updates study render options", String(lineWidth));
 
-  // --- Exported PNG includes WebGL geometry (poster HTML is best-effort composited when not tainted) ---
+  // --- Exported PNG includes composited HTML overlay marker + title chrome ---
   const posterContent = await page.evaluate(async () => {
+    const exportScale = 2;
+    const marker = { top: 8, left: 8, size: 24, r: 255, g: 0, b: 170 };
     const hooks = window.__studyTestHooks;
-    const blob = await hooks.exportPosterBlob({ scale: 2 });
+    const blob = await hooks.exportPosterBlob({ scale: exportScale });
     const bitmap = await createImageBitmap(blob);
     const canvas = document.createElement("canvas");
     canvas.width = bitmap.width;
     canvas.height = bitmap.height;
     const ctx = canvas.getContext("2d");
     ctx.drawImage(bitmap, 0, 0);
+
+    const sampleX = Math.round((marker.left + marker.size / 2) * exportScale);
+    const sampleY = Math.round((marker.top + marker.size / 2) * exportScale);
+    const markerPx = ctx.getImageData(sampleX, sampleY, 1, 1).data;
+    const markerMatch =
+      Math.abs(markerPx[0] - marker.r) <= 40 &&
+      Math.abs(markerPx[1] - marker.g) <= 40 &&
+      Math.abs(markerPx[2] - marker.b) <= 40;
+
+    const headerH = Math.round(bitmap.height * 0.12);
+    const header = ctx.getImageData(0, 0, bitmap.width, headerH);
+    let titleGoldPixels = 0;
+    for (let i = 0; i < header.data.length; i += 4) {
+      const r = header.data[i];
+      const g = header.data[i + 1];
+      const b = header.data[i + 2];
+      if (r > 160 && g > 120 && b < 100) titleGoldPixels += 1;
+    }
+
     const full = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
     let geometryPixels = 0;
     for (let i = 0; i < full.data.length; i += 4) {
@@ -254,13 +297,22 @@ try {
       const b = full.data[i + 2];
       if (r > 12 || g > 12 || b > 12) geometryPixels += 1;
     }
-    const titleVisible = Boolean(document.querySelector(".study-title")?.textContent?.length);
+
     bitmap.close();
-    return { geometryPixels, titleVisible, blobSize: blob.size };
+    return {
+      markerMatch,
+      markerRgb: [markerPx[0], markerPx[1], markerPx[2]],
+      titleGoldPixels,
+      geometryPixels,
+      blobSize: blob.size,
+      sample: [sampleX, sampleY],
+    };
   });
-  assert(posterContent.titleVisible, "poster title text present in DOM during export");
+  assert(posterContent.markerMatch, "exported PNG contains composited HTML export marker pixels", posterContent.markerRgb.join(","));
+  assert(posterContent.titleGoldPixels > 20, "exported PNG header contains composited title chrome (gold pixels)", String(posterContent.titleGoldPixels));
   assert(posterContent.geometryPixels > 10, "exported PNG includes WebGL geometry pixels", String(posterContent.geometryPixels));
   assert(posterContent.blobSize > 5000, "exported PNG blob is non-trivial", String(posterContent.blobSize));
+  console.log("NOTE: Safari/WebKit poster export was not run in CI (Chrome headless only); manual Safari verification still required.");
 
   await page.click("#studyPosterMode");
   await sleep(200);

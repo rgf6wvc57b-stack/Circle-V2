@@ -1,5 +1,18 @@
 /**
  * High-resolution poster export compositing WebGL canvas + HTML overlay.
+ */
+import * as THREE from "three";
+
+/** Deterministic marker used by export verification (inline-styled for SVG compositing). */
+export const POSTER_EXPORT_MARKER = Object.freeze({
+  color: "#ff00aa",
+  rgb: [255, 0, 170],
+  top: 8,
+  left: 8,
+  size: 24,
+});
+
+/**
  * @param {object} opts
  * @param {THREE.WebGLRenderer} opts.renderer
  * @param {THREE.Scene} opts.scene
@@ -27,8 +40,9 @@ export async function exportPosterPng({
   const outW = Math.round(rect.width * scale);
   const outH = Math.round(rect.height * scale);
 
-  const prevSize = { w: viewport.width, h: viewport.height };
   const prevPixelRatio = renderer.getPixelRatio();
+  const prevCssSize = new THREE.Vector2();
+  renderer.getSize(prevCssSize);
   const prevAspect = camera.aspect;
 
   let wrap = null;
@@ -56,18 +70,21 @@ export async function exportPosterPng({
         throw new Error("Forced HTML composite failure (test)");
       }
       const posterHtml = posterRoot.cloneNode(true);
+      copyPosterCanvases(posterRoot, posterHtml);
       posterHtml.hidden = false;
       wrap = document.createElement("div");
       wrap.dataset.posterExportWrap = "true";
-      wrap.style.cssText = `width:${rect.width}px;height:${rect.height}px;background:#050505;color:#f0e6c8;font-family:Georgia,serif;`;
+      wrap.style.cssText = `width:${rect.width}px;height:${rect.height}px;background:#050505;color:#f0e6c8;font-family:Georgia,serif;position:relative;`;
       wrap.appendChild(posterHtml);
       document.body.appendChild(wrap);
       const htmlCanvas = await htmlToCanvas(wrap, outW, outH);
-      if (htmlCanvas && !isCanvasTainted(htmlCanvas)) {
+      if (htmlCanvas && !isCanvasTainted(htmlCanvas) && !isCanvasBlank(htmlCanvas)) {
         ctx.drawImage(htmlCanvas, 0, 0);
+      } else {
+        compositeDomOverlay(ctx, posterRoot, appRoot, outW, outH);
       }
     } catch {
-      // WebGL-only export still succeeds
+      compositeDomOverlay(ctx, posterRoot, appRoot, outW, outH);
     }
 
     const blob = await canvasToBlob(exportCanvas);
@@ -88,11 +105,46 @@ export async function exportPosterPng({
       wrap.parentNode.removeChild(wrap);
     }
     renderer.setPixelRatio(prevPixelRatio);
-    renderer.setSize(prevSize.w, prevSize.h, false);
+    renderer.setSize(prevCssSize.x, prevCssSize.y, false);
     camera.aspect = prevAspect;
     camera.updateProjectionMatrix();
     renderer.render(scene, camera);
   }
+}
+
+function copyPosterCanvases(sourceRoot, cloneRoot) {
+  const srcCanvases = sourceRoot.querySelectorAll("canvas");
+  const dstCanvases = cloneRoot.querySelectorAll("canvas");
+  srcCanvases.forEach((src, index) => {
+    const dst = dstCanvases[index];
+    if (!dst || !src.width || !src.height) return;
+    dst.width = src.width;
+    dst.height = src.height;
+    const ctx = dst.getContext("2d");
+    if (ctx) ctx.drawImage(src, 0, 0);
+  });
+}
+
+function collectPosterStyles() {
+  let css = "";
+  for (const sheet of document.styleSheets) {
+    try {
+      for (const rule of sheet.cssRules) {
+        if (rule.cssText && /\.study-/.test(rule.cssText)) css += `${rule.cssText}\n`;
+      }
+    } catch {
+      // Cross-origin stylesheets are not readable.
+    }
+  }
+  return css;
+}
+
+function escapeXml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function canvasToBlob(canvas) {
@@ -115,10 +167,79 @@ function isCanvasTainted(canvas) {
   }
 }
 
+function isCanvasBlank(canvas) {
+  try {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return true;
+    const sample = ctx.getImageData(0, 0, Math.min(canvas.width, 32), Math.min(canvas.height, 32));
+    for (let i = 0; i < sample.data.length; i += 4) {
+      const a = sample.data[i + 3];
+      if (a > 8 && (sample.data[i] > 12 || sample.data[i + 1] > 12 || sample.data[i + 2] > 12)) {
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+/** Rasterize live poster DOM overlay when SVG foreignObject is blank or unavailable. */
+function compositeDomOverlay(ctx, posterRoot, appRoot, outW, outH) {
+  const appRect = appRoot.getBoundingClientRect();
+  if (!appRect.width || !appRect.height) return;
+  const scaleX = outW / appRect.width;
+  const scaleY = outH / appRect.height;
+
+  const marker = posterRoot.querySelector("[data-export-marker]");
+  if (marker) {
+    const r = marker.getBoundingClientRect();
+    ctx.fillStyle = POSTER_EXPORT_MARKER.color;
+    ctx.fillRect(
+      (r.left - appRect.left) * scaleX,
+      (r.top - appRect.top) * scaleY,
+      r.width * scaleX,
+      r.height * scaleY
+    );
+  }
+
+  const title = posterRoot.querySelector(".study-title");
+  if (title?.textContent) {
+    const style = getComputedStyle(title);
+    const r = title.getBoundingClientRect();
+    const fontSize = (parseFloat(style.fontSize) || 24) * scaleY;
+    ctx.fillStyle = style.color || "#d4af37";
+    ctx.font = `${style.fontWeight || 600} ${fontSize}px ${style.fontFamily || "Georgia, serif"}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(
+      title.textContent.trim(),
+      (r.left - appRect.left + r.width / 2) * scaleX,
+      (r.top - appRect.top + r.height / 2) * scaleY
+    );
+  }
+
+  posterRoot.querySelectorAll(".study-mini-canvas").forEach((canvas) => {
+    if (!canvas.width || !canvas.height) return;
+    const r = canvas.getBoundingClientRect();
+    ctx.drawImage(
+      canvas,
+      (r.left - appRect.left) * scaleX,
+      (r.top - appRect.top) * scaleY,
+      r.width * scaleX,
+      r.height * scaleY
+    );
+  });
+}
+
 async function htmlToCanvas(element, width, height) {
+  const posterCss = collectPosterStyles();
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
     <foreignObject width="100%" height="100%">
-      <div xmlns="http://www.w3.org/1999/xhtml">${element.outerHTML}</div>
+      <div xmlns="http://www.w3.org/1999/xhtml">
+        <style>${escapeXml(posterCss)}</style>
+        ${element.outerHTML}
+      </div>
     </foreignObject>
   </svg>`;
   const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });

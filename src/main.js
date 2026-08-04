@@ -2454,12 +2454,19 @@ if (getShowIntroOnOpen()) {
 
 window.__studyTestHooks = {
   getStudyController: () => studyController,
-  getRendererState: () => ({
-    width: webgl.domElement.width,
-    height: webgl.domElement.height,
-    pixelRatio: webgl.getPixelRatio(),
-    aspect: cameraController.getActiveCamera().aspect,
-  }),
+  getRendererState: () => {
+    const cssSize = new THREE.Vector2();
+    webgl.getSize(cssSize);
+    const el = webgl.domElement;
+    return {
+      cssWidth: cssSize.x,
+      cssHeight: cssSize.y,
+      bufferWidth: el.width,
+      bufferHeight: el.height,
+      pixelRatio: webgl.getPixelRatio(),
+      aspect: cameraController.getActiveCamera().aspect,
+    };
+  },
   setSceneBackground: (value) => {
     scene.background = value;
   },
