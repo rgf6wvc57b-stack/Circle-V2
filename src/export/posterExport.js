@@ -23,6 +23,7 @@ export const POSTER_EXPORT_MARKER = Object.freeze({
  * @param {string} [opts.filename]
  * @param {boolean} [opts.download]
  * @param {boolean} [opts.forceHtmlCompositeFailure] Test hook: simulate HTML compositing failure.
+ * @param {boolean} [opts.includeExportMarker] Test hook: inject verification marker into export composite only.
  */
 export async function exportPosterPng({
   renderer,
@@ -34,6 +35,7 @@ export async function exportPosterPng({
   filename = "geometry-study-poster.png",
   download = true,
   forceHtmlCompositeFailure = false,
+  includeExportMarker = false,
 }) {
   const viewport = renderer.domElement;
   const rect = appRoot.getBoundingClientRect();
@@ -71,6 +73,9 @@ export async function exportPosterPng({
       }
       const posterHtml = posterRoot.cloneNode(true);
       copyPosterCanvases(posterRoot, posterHtml);
+      if (includeExportMarker) {
+        injectExportMarker(posterHtml);
+      }
       posterHtml.hidden = false;
       wrap = document.createElement("div");
       wrap.dataset.posterExportWrap = "true";
@@ -81,10 +86,10 @@ export async function exportPosterPng({
       if (htmlCanvas && !isCanvasTainted(htmlCanvas) && !isCanvasBlank(htmlCanvas)) {
         ctx.drawImage(htmlCanvas, 0, 0);
       } else {
-        compositeDomOverlay(ctx, posterRoot, appRoot, outW, outH);
+        compositeDomOverlay(ctx, posterRoot, appRoot, outW, outH, { includeExportMarker });
       }
     } catch {
-      compositeDomOverlay(ctx, posterRoot, appRoot, outW, outH);
+      compositeDomOverlay(ctx, posterRoot, appRoot, outW, outH, { includeExportMarker });
     }
 
     const blob = await canvasToBlob(exportCanvas);
@@ -110,6 +115,16 @@ export async function exportPosterPng({
     camera.updateProjectionMatrix();
     renderer.render(scene, camera);
   }
+}
+
+function injectExportMarker(root) {
+  const poster = root.querySelector(".study-poster") ?? root;
+  const marker = document.createElement("div");
+  marker.dataset.exportMarker = "true";
+  marker.setAttribute("aria-hidden", "true");
+  marker.style.cssText = `position:absolute;top:${POSTER_EXPORT_MARKER.top}px;left:${POSTER_EXPORT_MARKER.left}px;width:${POSTER_EXPORT_MARKER.size}px;height:${POSTER_EXPORT_MARKER.size}px;background:${POSTER_EXPORT_MARKER.color};z-index:9999;pointer-events:none;`;
+  poster.prepend(marker);
+  return marker;
 }
 
 function copyPosterCanvases(sourceRoot, cloneRoot) {
@@ -185,21 +200,19 @@ function isCanvasBlank(canvas) {
 }
 
 /** Rasterize live poster DOM overlay when SVG foreignObject is blank or unavailable. */
-function compositeDomOverlay(ctx, posterRoot, appRoot, outW, outH) {
+function compositeDomOverlay(ctx, posterRoot, appRoot, outW, outH, { includeExportMarker = false } = {}) {
   const appRect = appRoot.getBoundingClientRect();
   if (!appRect.width || !appRect.height) return;
   const scaleX = outW / appRect.width;
   const scaleY = outH / appRect.height;
 
-  const marker = posterRoot.querySelector("[data-export-marker]");
-  if (marker) {
-    const r = marker.getBoundingClientRect();
+  if (includeExportMarker) {
     ctx.fillStyle = POSTER_EXPORT_MARKER.color;
     ctx.fillRect(
-      (r.left - appRect.left) * scaleX,
-      (r.top - appRect.top) * scaleY,
-      r.width * scaleX,
-      r.height * scaleY
+      POSTER_EXPORT_MARKER.left * scaleX,
+      POSTER_EXPORT_MARKER.top * scaleY,
+      POSTER_EXPORT_MARKER.size * scaleX,
+      POSTER_EXPORT_MARKER.size * scaleY
     );
   }
 

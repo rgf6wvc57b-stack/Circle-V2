@@ -61,7 +61,14 @@ const posterExportSrc = readFileSync(join(root, "src/export/posterExport.js"), "
 assert(/finally\s*\{/.test(posterExportSrc), "poster export uses finally cleanup");
 assert(/URL\.revokeObjectURL/.test(posterExportSrc), "poster export revokes object URLs");
 assert(/renderer\.getSize\(/.test(posterExportSrc), "poster export saves CSS dimensions via renderer.getSize()");
-assert(/data-export-marker/.test(readFileSync(join(root, "src/studies/StudyController.js"), "utf8")), "poster HTML includes deterministic export marker");
+assert(/includeExportMarker/.test(posterExportSrc), "poster export supports verification-only marker injection");
+assert(!/data-export-marker/.test(readFileSync(join(root, "src/studies/StudyController.js"), "utf8")), "live poster HTML does not include export marker");
+
+const studyRendererSrc = readFileSync(join(root, "src/rendering/StudySceneRenderer.js"), "utf8");
+assert(/Line2/.test(studyRendererSrc), "study renderer uses Line2 for thick lines");
+assert(/LineMaterial/.test(studyRendererSrc), "study renderer uses LineMaterial");
+assert(/Partial<typeof DEFAULT_STUDY_RENDER_OPTIONS>/.test(studyRendererSrc), "study renderer options JSDoc is valid");
+assert(/showGuides/.test(studyRendererSrc), "study renderer honors showGuides for lines and circles");
 
 // --- Node: transparent/null background restore on study exit ---
 {
@@ -162,6 +169,7 @@ try {
   assert(merkabaActive.posterVisible, "poster overlay visible");
   assert(merkabaActive.ariaHidden === "false", "poster root aria-hidden toggled off when active", merkabaActive.ariaHidden);
   assert(/Merkaba|Stellated/i.test(merkabaActive.title), "merkaba study title shown", merkabaActive.title);
+  assert(!(await page.evaluate(() => Boolean(document.querySelector("[data-export-marker]")))), "live study poster has no export verification marker");
 
   await page.select("#studySelect", "dimensional-relationships");
   await sleep(600);
@@ -249,21 +257,57 @@ try {
   assert(failedExport.before.bufferHeight === failedExport.after.bufferHeight, "failed export restores drawing-buffer height");
   assert(failedExport.wraps === 0, "failed export removes temporary wrapper elements", String(failedExport.wraps));
 
-  // --- Line thickness slider wired through StudySceneRenderer ---
+  // --- Line thickness slider uses LineMaterial and visibly changes rendered lines ---
   await page.evaluate(() => {
-    const slider = document.getElementById("studyLineWidth");
-    slider.value = "2.5";
-    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    const ctrl = window.__studyTestHooks.getStudyController();
+    ctrl.sequenceStep = 3;
+    ctrl.rebuild();
+    ctrl.frameStudy();
+    ctrl.setOptions({ lineWidth: 0.7, showFaces: false, showVertices: false });
   });
-  const lineWidth = await page.evaluate(() => window.__studyTestHooks.getStudyController().options.lineWidth);
-  assert(Math.abs(lineWidth - 2.5) < 1e-6, "line thickness slider updates study render options", String(lineWidth));
+  await sleep(400);
+  const thinLine = await page.evaluate(() => ({
+    widths: window.__studyTestHooks.getStudyLineWidths(),
+    sample: window.__studyTestHooks.sampleStudyLineThickness(),
+  }));
+  assert(Math.abs(thinLine.widths.edge - 0.7) < 1e-6, "thin line width applied to LineMaterial", String(thinLine.widths.edge));
+  assert(thinLine.sample.goldPixels > 0, "thin study lines render gold pixels", String(thinLine.sample.goldPixels));
+
+  await page.evaluate(() => {
+    window.__studyTestHooks.getStudyController().setOptions({ lineWidth: 4.5 });
+  });
+  await sleep(400);
+  const thickLine = await page.evaluate(() => ({
+    widths: window.__studyTestHooks.getStudyLineWidths(),
+    sample: window.__studyTestHooks.sampleStudyLineThickness(),
+  }));
+  assert(Math.abs(thickLine.widths.edge - 4.5) < 1e-6, "thick line width applied to LineMaterial", String(thickLine.widths.edge));
+  assert(
+    thickLine.sample.span > thinLine.sample.span * 1.25,
+    "line thickness slider visibly increases rendered line span",
+    `thin=${thinLine.sample.span} thick=${thickLine.sample.span}`
+  );
+
+  // --- drawLine/drawCircle honor showGuides ---
+  await page.select("#studySelect", "dimensional-relationships");
+  await sleep(500);
+  const guidesOn = await page.evaluate(() => window.__studyTestHooks.countStudyLines());
+  await page.evaluate(() => {
+    window.__studyTestHooks.getStudyController().setOptions({ showGuides: false });
+  });
+  await sleep(300);
+  const guidesOff = await page.evaluate(() => window.__studyTestHooks.countStudyLines());
+  assert(guidesOff < guidesOn, "disabling showGuides removes guide Line2 instances", `${guidesOn} -> ${guidesOff}`);
+
+  await page.select("#studySelect", "merkaba-stellated-octahedron");
+  await sleep(400);
 
   // --- Exported PNG includes composited HTML overlay marker + title chrome ---
   const posterContent = await page.evaluate(async () => {
     const exportScale = 2;
     const marker = { top: 8, left: 8, size: 24, r: 255, g: 0, b: 170 };
     const hooks = window.__studyTestHooks;
-    const blob = await hooks.exportPosterBlob({ scale: exportScale });
+    const blob = await hooks.exportPosterBlob({ scale: exportScale, includeExportMarker: true });
     const bitmap = await createImageBitmap(blob);
     const canvas = document.createElement("canvas");
     canvas.width = bitmap.width;

@@ -286,12 +286,9 @@ export class StudyController {
             .join("")}</aside>`
         : "";
 
-    const exportMarker = `<div data-export-marker="true" aria-hidden="true" style="position:absolute;top:8px;left:8px;width:24px;height:24px;background:#ff00aa;z-index:9999;pointer-events:none;"></div>`;
-
     if (study.id === MERKABA_STUDY.id) {
       return `
         <div class="study-poster study-poster-merkaba">
-          ${exportMarker}
           <header class="study-poster-header">
             ${labelsVisible ? `<h1 class="study-title">${study.title}</h1>` : ""}
             ${labelsVisible ? `<p class="study-subtitle">${study.subtitle}</p>` : ""}
@@ -313,7 +310,6 @@ export class StudyController {
 
     return `
       <div class="study-poster study-poster-dimensional">
-        ${exportMarker}
         <header class="study-poster-header">
           ${labelsVisible ? `<h1 class="study-title">${study.title}</h1>` : ""}
           ${labelsVisible ? `<p class="study-subtitle">${study.subtitle}</p>` : ""}
@@ -457,7 +453,7 @@ export class StudyController {
     }
   }
 
-  async exportPoster({ scale = 3, download = true, forceHtmlCompositeFailure = false } = {}) {
+  async exportPoster({ scale = 3, download = true, forceHtmlCompositeFailure = false, includeExportMarker = false } = {}) {
     return exportPosterPng({
       renderer: this.renderer,
       scene: this.scene,
@@ -468,6 +464,7 @@ export class StudyController {
       filename: `${this.studyId}-poster.png`,
       download,
       forceHtmlCompositeFailure,
+      includeExportMarker,
     });
   }
 
