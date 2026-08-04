@@ -8,6 +8,8 @@
  * @param {HTMLElement} opts.appRoot
  * @param {number} [opts.scale]
  * @param {string} [opts.filename]
+ * @param {boolean} [opts.download]
+ * @param {boolean} [opts.forceHtmlCompositeFailure] Test hook: simulate HTML compositing failure.
  */
 export async function exportPosterPng({
   renderer,
@@ -17,68 +19,100 @@ export async function exportPosterPng({
   appRoot,
   scale = 3,
   filename = "geometry-study-poster.png",
+  download = true,
+  forceHtmlCompositeFailure = false,
 }) {
   const viewport = renderer.domElement;
   const rect = appRoot.getBoundingClientRect();
   const outW = Math.round(rect.width * scale);
   const outH = Math.round(rect.height * scale);
 
-  const exportCanvas = document.createElement("canvas");
-  exportCanvas.width = outW;
-  exportCanvas.height = outH;
-  const ctx = exportCanvas.getContext("2d");
-  if (!ctx) throw new Error("Could not create export canvas");
-
-  ctx.fillStyle = "#050505";
-  ctx.fillRect(0, 0, outW, outH);
-
   const prevSize = { w: viewport.width, h: viewport.height };
   const prevPixelRatio = renderer.getPixelRatio();
-  renderer.setPixelRatio(1);
-  renderer.setSize(outW, outH, false);
-  camera.aspect = outW / outH;
-  camera.updateProjectionMatrix();
-  renderer.render(scene, camera);
+  const prevAspect = camera.aspect;
 
-  ctx.drawImage(viewport, 0, 0, outW, outH);
+  let wrap = null;
 
-  renderer.setPixelRatio(prevPixelRatio);
-  renderer.setSize(prevSize.w, prevSize.h, false);
-  camera.aspect = prevSize.w / prevSize.h;
-  camera.updateProjectionMatrix();
-  renderer.render(scene, camera);
-
-  // Composite poster HTML chrome using foreignObject via SVG (fallback: WebGL only)
   try {
-    const posterHtml = posterRoot.cloneNode(true);
-    posterHtml.hidden = false;
-    const wrap = document.createElement("div");
-    wrap.style.cssText = `width:${rect.width}px;height:${rect.height}px;background:#050505;color:#f0e6c8;font-family:Georgia,serif;`;
-    wrap.appendChild(posterHtml);
-    document.body.appendChild(wrap);
-    const htmlCanvas = await htmlToCanvas(wrap, outW, outH);
-    document.body.removeChild(wrap);
-    if (htmlCanvas) {
-      ctx.drawImage(htmlCanvas, 0, 0);
-    }
-  } catch {
-    // WebGL-only export still succeeds
-  }
+    const exportCanvas = document.createElement("canvas");
+    exportCanvas.width = outW;
+    exportCanvas.height = outH;
+    const ctx = exportCanvas.getContext("2d");
+    if (!ctx) throw new Error("Could not create export canvas");
 
-  return new Promise((resolve, reject) => {
-    exportCanvas.toBlob((blob) => {
-      if (!blob) {
-        reject(new Error("Poster export failed"));
-        return;
+    ctx.fillStyle = "#050505";
+    ctx.fillRect(0, 0, outW, outH);
+
+    renderer.setPixelRatio(1);
+    renderer.setSize(outW, outH, false);
+    camera.aspect = outW / outH;
+    camera.updateProjectionMatrix();
+    renderer.render(scene, camera);
+
+    ctx.drawImage(viewport, 0, 0, outW, outH);
+
+    try {
+      if (forceHtmlCompositeFailure) {
+        throw new Error("Forced HTML composite failure (test)");
       }
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = filename;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(link.href), 2000);
-      resolve(blob);
+      const posterHtml = posterRoot.cloneNode(true);
+      posterHtml.hidden = false;
+      wrap = document.createElement("div");
+      wrap.dataset.posterExportWrap = "true";
+      wrap.style.cssText = `width:${rect.width}px;height:${rect.height}px;background:#050505;color:#f0e6c8;font-family:Georgia,serif;`;
+      wrap.appendChild(posterHtml);
+      document.body.appendChild(wrap);
+      const htmlCanvas = await htmlToCanvas(wrap, outW, outH);
+      if (htmlCanvas && !isCanvasTainted(htmlCanvas)) {
+        ctx.drawImage(htmlCanvas, 0, 0);
+      }
+    } catch {
+      // WebGL-only export still succeeds
+    }
+
+    const blob = await canvasToBlob(exportCanvas);
+    if (download) {
+      const url = URL.createObjectURL(blob);
+      try {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        link.click();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }
+    return blob;
+  } finally {
+    if (wrap?.parentNode) {
+      wrap.parentNode.removeChild(wrap);
+    }
+    renderer.setPixelRatio(prevPixelRatio);
+    renderer.setSize(prevSize.w, prevSize.h, false);
+    camera.aspect = prevAspect;
+    camera.updateProjectionMatrix();
+    renderer.render(scene, camera);
+  }
+}
+
+function canvasToBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) reject(new Error("Poster export failed"));
+      else resolve(blob);
     }, "image/png");
   });
+}
+
+function isCanvasTainted(canvas) {
+  try {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return true;
+    ctx.getImageData(0, 0, 1, 1);
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 async function htmlToCanvas(element, width, height) {
@@ -89,17 +123,20 @@ async function htmlToCanvas(element, width, height) {
   </svg>`;
   const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
   const url = URL.createObjectURL(blob);
-  const img = new Image();
-  await new Promise((resolve, reject) => {
-    img.onload = resolve;
-    img.onerror = reject;
-    img.src = url;
-  });
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(img, 0, 0);
-  URL.revokeObjectURL(url);
-  return canvas;
+  try {
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = url;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    return canvas;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }

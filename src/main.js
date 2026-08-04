@@ -2452,4 +2452,28 @@ if (getShowIntroOnOpen()) {
   setIntroOpen(false);
 }
 
+window.__studyTestHooks = {
+  getStudyController: () => studyController,
+  getRendererState: () => ({
+    width: webgl.domElement.width,
+    height: webgl.domElement.height,
+    pixelRatio: webgl.getPixelRatio(),
+    aspect: cameraController.getActiveCamera().aspect,
+  }),
+  setSceneBackground: (value) => {
+    scene.background = value;
+  },
+  getSceneBackground: () => scene.background,
+  getSceneBackgroundState: () => (scene.background === null ? "null" : "color"),
+  getSceneFog: () => scene.fog,
+  exportPosterBlob: (opts) =>
+    studyController.exportPoster({
+      scale: opts?.scale ?? 2,
+      download: false,
+      forceHtmlCompositeFailure: opts?.forceHtmlCompositeFailure ?? false,
+    }),
+  countExportWraps: () =>
+    document.querySelectorAll("[data-poster-export-wrap]").length,
+};
+
 animate();

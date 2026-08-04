@@ -23,32 +23,6 @@ export function createPolyhedron(spec) {
   };
 }
 
-/** Complete graph edges for n vertices. */
-export function completeEdges(count) {
-  const edges = [];
-  for (let i = 0; i < count; i += 1) {
-    for (let j = i + 1; j < count; j += 1) {
-      edges.push([i, j]);
-    }
-  }
-  return edges;
-}
-
-/** Cube edge pairs by Hamming distance 1 on bit index. */
-export function cubeEdges(count = 8) {
-  const edges = [];
-  for (let i = 0; i < count; i += 1) {
-    for (let j = i + 1; j < count; j += 1) {
-      if ((i ^ j) && !(i ^ j) & (i ^ j - 1)) {
-        // single bit flip
-      }
-      const diff = i ^ j;
-      if (diff && (diff & diff - 1) === 0) edges.push([i, j]);
-    }
-  }
-  return edges;
-}
-
 export function edgeKey(a, b) {
   return a < b ? `${a}-${b}` : `${b}-${a}`;
 }

@@ -5,9 +5,6 @@ import { StudySceneRenderer } from "../rendering/StudySceneRenderer.js";
 import { getStudyById, listStudies } from "./registry.js";
 import { MERKABA_STUDY } from "./definitions/merkabaStudy.js";
 import { DIMENSIONAL_STUDY } from "./definitions/dimensionalStudy.js";
-import {
-  vesicaPiscisConstruction,
-} from "../geometry/solids/catalog.js";
 
 /**
  * Interactive geometry study / poster engine controller.
@@ -30,8 +27,6 @@ export class StudyController {
     this.appRoot = deps.appRoot;
     this.panel = deps.panel;
     this.studyGroup = deps.studyGroup;
-    this.miniScene = new THREE.Scene();
-    this.miniScene.background = new THREE.Color(POSTER_PALETTE.background);
     this.studyRenderer = new StudySceneRenderer(this.studyGroup, { ...DEFAULT_STUDY_RENDER_OPTIONS });
     this.active = false;
     this.posterMode = false;
@@ -40,8 +35,18 @@ export class StudyController {
     this.sequenceStep = 0;
     this.sequencePlaying = false;
     this._savedBackground = null;
-    this._savedFog = null;
+    this._savedFog = undefined;
+    this._backgroundSaved = false;
     this._onResize = () => this.#layoutMiniCanvases();
+    this._onBlueprintClick = (event) => {
+      const btn = event.target.closest(".study-blueprint-step");
+      if (!btn || !this.posterRoot.contains(btn)) return;
+      this.sequenceStep = Number(btn.dataset.seq);
+      this.rebuild();
+      this.syncPosterDOM();
+      this.frameStudy();
+    };
+    this.posterRoot.addEventListener("click", this._onBlueprintClick);
   }
 
   listStudies() {
@@ -79,6 +84,7 @@ export class StudyController {
     this.studyGroup.visible = false;
     this.#applyPosterBackground(false);
     this.posterRoot.hidden = true;
+    this.posterRoot.setAttribute("aria-hidden", "true");
     this.appRoot.classList.remove("study-active", "study-poster-mode");
     window.removeEventListener("resize", this._onResize);
     this.studyRenderer.clear();
@@ -219,9 +225,11 @@ export class StudyController {
     const study = this.getStudy();
     if (!study || !this.active) {
       this.posterRoot.hidden = true;
+      this.posterRoot.setAttribute("aria-hidden", "true");
       return;
     }
     this.posterRoot.hidden = false;
+    this.posterRoot.setAttribute("aria-hidden", "false");
     this.appRoot.classList.add("study-active");
     this.appRoot.classList.toggle("study-poster-mode", this.posterMode);
 
@@ -327,15 +335,6 @@ export class StudyController {
       const solidKey = canvas.dataset.solid;
       this.#renderMiniCanvas(canvas, solidKey, study);
     });
-
-    this.posterRoot.querySelectorAll(".study-blueprint-step").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        this.sequenceStep = Number(btn.dataset.seq);
-        this.rebuild();
-        this.syncPosterDOM();
-        this.frameStudy();
-      });
-    });
   }
 
   #renderMiniCanvas(canvas, solidKey, study) {
@@ -347,7 +346,7 @@ export class StudyController {
     ctx.fillRect(0, 0, w, h);
     ctx.strokeStyle = POSTER_PALETTE.goldLine;
     ctx.fillStyle = POSTER_PALETTE.textPrimary;
-    ctx.lineWidth = 1.2;
+    ctx.lineWidth = this.options.lineWidth ?? 1.2;
     ctx.font = "11px Georgia, serif";
 
     const drawPoly2D = (points, closed = false) => {
@@ -454,7 +453,7 @@ export class StudyController {
     }
   }
 
-  async exportPoster({ scale = 3 } = {}) {
+  async exportPoster({ scale = 3, download = true, forceHtmlCompositeFailure = false } = {}) {
     return exportPosterPng({
       renderer: this.renderer,
       scene: this.scene,
@@ -463,19 +462,26 @@ export class StudyController {
       appRoot: this.appRoot,
       scale,
       filename: `${this.studyId}-poster.png`,
+      download,
+      forceHtmlCompositeFailure,
     });
   }
 
   #applyPosterBackground(active) {
     if (active) {
-      this._savedBackground = this.scene.background?.clone?.() ?? this.scene.background;
-      this._savedFog = this.scene.fog;
+      if (!this._backgroundSaved) {
+        this._savedBackground = this.scene.background?.clone?.() ?? this.scene.background;
+        this._savedFog = this.scene.fog;
+        this._backgroundSaved = true;
+      }
       this.scene.background = new THREE.Color(POSTER_PALETTE.background);
       this.scene.fog = null;
-    } else if (this._savedBackground) {
+    } else if (this._backgroundSaved) {
       this.scene.background = this._savedBackground;
       this.scene.fog = this._savedFog;
       this._savedBackground = null;
+      this._savedFog = undefined;
+      this._backgroundSaved = false;
     }
   }
 }

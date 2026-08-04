@@ -93,6 +93,12 @@ export function bindStudyControls(studyController, hooks) {
     studyController.setOptions({ sphereScale: v, vertexScale: v });
   });
 
+  document.getElementById("studyLineWidth")?.addEventListener("input", (e) => {
+    const v = Number(e.target.value);
+    document.getElementById("studyLineWidthValue").textContent = v.toFixed(2);
+    studyController.setOptions({ lineWidth: v });
+  });
+
   document.getElementById("studySeqBack")?.addEventListener("click", () => {
     studyController.stepSequenceBack();
   });

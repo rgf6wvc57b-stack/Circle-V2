@@ -13,6 +13,7 @@ export class StudySceneRenderer {
     this.root = root;
     this.options = { ...options };
     this.materials = this.#createMaterials();
+    this.setOptions(this.options);
   }
 
   #createMaterials() {
@@ -80,6 +81,10 @@ export class StudySceneRenderer {
     this.materials.faceA.opacity = this.options.faceOpacity ?? POSTER_PALETTE.faceAlpha;
     this.materials.faceB.opacity = this.options.faceOpacity ?? POSTER_PALETTE.faceAlpha;
     this.materials.faceNeutral.opacity = this.options.faceOpacity ?? POSTER_PALETTE.faceAlpha;
+    const lineWidth = this.options.lineWidth ?? 1.4;
+    this.materials.edge.linewidth = lineWidth;
+    this.materials.internal.linewidth = lineWidth * 0.85;
+    this.materials.guide.linewidth = lineWidth * 0.75;
   }
 
   clear() {
