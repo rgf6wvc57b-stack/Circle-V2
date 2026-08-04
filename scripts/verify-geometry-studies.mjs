@@ -2,7 +2,7 @@
  * Geometry study / poster engine verification.
  * Run: node scripts/verify-geometry-studies.mjs
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -13,6 +13,7 @@ import { STUDY_REGISTRY, getStudyById } from "../src/studies/registry.js";
 import { stellatedOctahedron, vesicaPiscisConstruction } from "../src/geometry/solids/catalog.js";
 import { StudyController } from "../src/studies/StudyController.js";
 import { MERKABA_STUDY } from "../src/studies/definitions/merkabaStudy.js";
+import { computeStudyViewLayout } from "../src/studies/studyLayout.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
@@ -76,6 +77,65 @@ assert(/Line2/.test(studyRendererSrc), "study renderer uses Line2 for thick line
 assert(/LineMaterial/.test(studyRendererSrc), "study renderer uses LineMaterial");
 assert(/Partial<typeof DEFAULT_STUDY_RENDER_OPTIONS>/.test(studyRendererSrc), "study renderer options JSDoc is valid");
 assert(/showGuides/.test(studyRendererSrc), "study renderer honors showGuides for lines and circles");
+
+const posterCss = readFileSync(join(root, "src/styles/poster.css"), "utf8");
+assert(/--study-panel-inset-right/.test(posterCss), "poster CSS reserves panel inset via custom property");
+assert(/--study-panel-inset-top/.test(posterCss) || /var\(--sat/.test(posterCss), "poster CSS aligns top with safe-area inset");
+assert(/study-full-frame .study-poster-root[\s\S]*top:\s*0/.test(posterCss), "full-frame poster root resets top to 0");
+assert(/min-height:\s*42vh/.test(posterCss), "dimensional center slot has vh fallback before dvh");
+assert(/study-poster-dimensional .study-info/.test(posterCss), "dimensional study-info has explicit grid placement");
+assert(/study-poster-exporting/.test(posterCss), "poster export hides control panel");
+assert(/\.study-blueprint-step\.active/.test(posterCss), "blueprint active step styling present");
+
+{
+  const layout = computeStudyViewLayout({
+    fullWidth: 2048,
+    fullHeight: 1536,
+    panelEl: {
+      getBoundingClientRect: () => ({
+        left: 1712,
+        right: 2048,
+        top: 16,
+        bottom: 1500,
+        width: 336,
+        height: 1484,
+      }),
+    },
+    panelOpen: true,
+    posterMode: false,
+    exporting: false,
+  });
+  assert(layout.insets.insetRight > 200, "iPad landscape reserves right inset for panel", String(layout.insets.insetRight));
+  assert(layout.rect.layout === "right", "iPad landscape uses right-panel layout");
+  assert(layout.rect.width === layout.insets.availableWidth, "camera rect width matches poster available width");
+  const exportLayout = computeStudyViewLayout({
+    fullWidth: 2048,
+    fullHeight: 1536,
+    exporting: true,
+  });
+  assert(exportLayout.fullFrame, "export layout is full frame");
+  assert(exportLayout.insets.insetRight === 0 && exportLayout.insets.insetBottom === 0, "export uses zero panel inset");
+  assert(exportLayout.rect.width === 2048, "export camera uses full viewport width");
+  const safeAreaExport = computeStudyViewLayout({
+    fullWidth: 1179,
+    fullHeight: 2556,
+    exporting: true,
+    safeArea: { top: 59, right: 0, bottom: 34, left: 0 },
+  });
+  assert(safeAreaExport.rect.width === 1179 && safeAreaExport.rect.height === 2556, "full-frame export ignores safe-area clipping");
+  assert(safeAreaExport.rect.x === 0 && safeAreaExport.rect.y === 0, "full-frame export rect starts at origin");
+  const safeAreaNormal = computeStudyViewLayout({
+    fullWidth: 1179,
+    fullHeight: 2556,
+    panelOpen: false,
+    posterMode: false,
+    exporting: false,
+    safeArea: { top: 59, right: 0, bottom: 34, left: 21 },
+  });
+  assert(safeAreaNormal.insets.insetTop === 59, "normal study reserves top safe-area inset", String(safeAreaNormal.insets.insetTop));
+  assert(safeAreaNormal.insets.insetLeft === 21, "normal study reserves left safe-area inset", String(safeAreaNormal.insets.insetLeft));
+  assert(safeAreaNormal.rect.x === 21 && safeAreaNormal.rect.y === 59, "camera rect starts at safe-area origin");
+}
 
 // --- Node: transparent/null background restore on study exit ---
 {
@@ -251,9 +311,11 @@ try {
     const before = hooks.getRendererState();
     const blob = await hooks.exportPosterBlob({ scale: 2 });
     const after = hooks.getRendererState();
+    const layout = hooks.getStudyLayoutState();
     return {
       before,
       after,
+      layout,
       blobSize: blob?.size ?? 0,
       wraps: hooks.countExportWraps(),
     };
@@ -263,7 +325,13 @@ try {
   assert(exportRestore.before.bufferWidth === exportRestore.after.bufferWidth, "export restores drawing-buffer width", `${exportRestore.before.bufferWidth} vs ${exportRestore.after.bufferWidth}`);
   assert(exportRestore.before.bufferHeight === exportRestore.after.bufferHeight, "export restores drawing-buffer height", `${exportRestore.before.bufferHeight} vs ${exportRestore.after.bufferHeight}`);
   assert(Math.abs(exportRestore.before.pixelRatio - exportRestore.after.pixelRatio) < 1e-6, "export restores pixel ratio", `${exportRestore.before.pixelRatio} vs ${exportRestore.after.pixelRatio}`);
-  assert(Math.abs(exportRestore.before.aspect - exportRestore.after.aspect) < 1e-6, "export restores camera aspect");
+  const expectedAspect =
+    exportRestore.layout.camera.width / Math.max(1, exportRestore.layout.camera.height);
+  assert(
+    Math.abs(exportRestore.after.aspect - expectedAspect) < 1e-3,
+    "export restores panel-aware camera aspect after study layout sync",
+    `${exportRestore.after.aspect} vs ${expectedAspect}`
+  );
   assert(exportRestore.wraps === 0, "export removes temporary wrapper elements", String(exportRestore.wraps));
   assert(exportRestore.blobSize > 5000, "exported PNG blob has substantial content", String(exportRestore.blobSize));
 
@@ -393,9 +461,268 @@ try {
   assert(posterContent.blobSize > 5000, "exported PNG blob is non-trivial", String(posterContent.blobSize));
   console.log("NOTE: Safari/WebKit poster export was not run in CI (Chrome headless only); manual Safari verification still required.");
 
-  await page.click("#studyPosterMode");
+  // --- Responsive layout: iPad landscape, iPad portrait, iPhone portrait ---
+  await page.evaluate(() => {
+    const studyCb = document.getElementById("studyModeEnabled");
+    if (!studyCb.checked) studyCb.click();
+    const posterCb = document.getElementById("studyPosterMode");
+    if (posterCb.checked) posterCb.click();
+  });
+  await sleep(600);
+  const studyOverlapSelectors = [
+    ".study-title",
+    ".study-subtitle",
+    ".study-ratio-row",
+    ".study-info",
+    ".study-footer",
+    ".study-summary",
+  ];
+  const viewports = [
+    { name: "ipad-landscape", width: 2048, height: 1536 },
+    { name: "ipad-portrait", width: 1536, height: 2048 },
+    { name: "iphone-portrait", width: 1179, height: 2556 },
+  ];
+  const screenshotDir = "/opt/cursor/artifacts/screenshots";
+  try {
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(screenshotDir, { recursive: true });
+  } catch {
+    // directory may already exist
+  }
+
+  await page.select("#studySelect", "dimensional-relationships");
+  await sleep(400);
+
+  for (const vp of viewports) {
+    await page.setViewport({ width: vp.width, height: vp.height, deviceScaleFactor: 1 });
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("resize"));
+      window.__studyTestHooks.getStudyController().frameStudy();
+    });
+    await sleep(600);
+
+    const layout = await page.evaluate((selectors) => {
+      const state = window.__studyTestHooks.getStudyLayoutState();
+      const insets = state.insets;
+      const overlap = window.__studyTestHooks.measureStudyElementOverlaps(selectors);
+      const geom = window.__studyTestHooks.measureStudyGeometrySize();
+      const panel = document.getElementById("panel");
+      const panelRect = panel?.getBoundingClientRect();
+      const title = document.querySelector(".study-title")?.getBoundingClientRect();
+      const panelOverlapTitle =
+        title &&
+        panelRect &&
+        title.right > panelRect.left + 4 &&
+        title.bottom > panelRect.top + 4 &&
+        title.top < panelRect.bottom - 4;
+      return { state, insets, overlap, geom, panelOverlapTitle };
+    }, studyOverlapSelectors);
+
+    assert(layout.insets.insetRight > 0 || layout.insets.insetBottom > 0, `${vp.name}: poster reserves panel inset`, JSON.stringify(layout.insets));
+    assert(
+      layout.state.camera && layout.state.camera.width < layout.state.camera.fullWidth - 100,
+      `${vp.name}: camera available rect reserves panel space`,
+      JSON.stringify(layout.state.camera)
+    );
+    assert(
+      Math.abs(layout.state.camera.width - (layout.state.camera.fullWidth - layout.insets.insetRight)) < 24,
+      `${vp.name}: camera and CSS insets stay synchronized`,
+      `camera=${layout.state.camera?.width} insetRight=${layout.insets.insetRight}`
+    );
+    assert(layout.overlap.overlaps.length === 0, `${vp.name}: study poster elements do not overlap`, JSON.stringify(layout.overlap.overlaps));
+    assert(!layout.panelOverlapTitle, `${vp.name}: title does not sit under control panel`);
+    assert(layout.geom.goldSpan > 8, `${vp.name}: 3D geometry spans usable width`, `span=${layout.geom.goldSpan} avail=${layout.geom.availWidth}`);
+    assert(layout.geom.goldPixels > 80, `${vp.name}: 3D geometry renders visible gold lines`, String(layout.geom.goldPixels));
+
+    await page.screenshot({
+      path: join(screenshotDir, `study-dimensional-${vp.name}-after.png`),
+      fullPage: false,
+    });
+    console.log(`NOTE: saved ${join(screenshotDir, `study-dimensional-${vp.name}-after.png`)}`);
+  }
+
+  // Poster export view uses full width (panel hidden) with synchronized camera
+  await page.setViewport({ width: 2048, height: 1536, deviceScaleFactor: 1 });
+  await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+  await page.evaluate(() => {
+    const cb = document.getElementById("studyPosterMode");
+    if (!cb.checked) cb.click();
+  });
+  await sleep(400);
+  const posterModeLayout = await page.evaluate(() => {
+    const state = window.__studyTestHooks.getStudyLayoutState();
+    const panel = document.getElementById("panel");
+    const style = panel ? getComputedStyle(panel) : null;
+    const panelRect = panel?.getBoundingClientRect();
+    return {
+      state,
+      panelHidden:
+        style?.visibility === "hidden" ||
+        parseFloat(style?.opacity || "1") < 0.05 ||
+        (panelRect && panelRect.left >= window.innerWidth - 4),
+    };
+  });
+  assert(posterModeLayout.state.insets.insetRight === 0 && posterModeLayout.state.insets.insetBottom === 0, "poster mode clears panel insets");
+  assert(posterModeLayout.state.camera.width === posterModeLayout.state.camera.fullWidth, "poster mode camera uses full viewport width");
+  assert(posterModeLayout.state.insets.fullFrame, "poster mode marks full-frame layout");
+  assert(posterModeLayout.panelHidden, "poster mode hides control panel");
+  await page.screenshot({
+    path: join(screenshotDir, "study-poster-mode-ipad-landscape-after.png"),
+    fullPage: false,
+  });
+
+  // PNG export keeps full-frame layout for the entire operation
+  await page.evaluate(() => {
+    const ctrl = window.__studyTestHooks.getStudyController();
+    ctrl.setPosterMode(false);
+    window.__studyTestHooks.setPanelOpen(true);
+    window.dispatchEvent(new Event("resize"));
+    window.__studyTestHooks.syncStudyViewLayout();
+    ctrl.frameStudy();
+  });
+  await sleep(300);
+  const exportProbe = await page.evaluate(async () => window.__studyTestHooks.probeExportLayout({ scale: 2 }));
+  assert(exportProbe.during?.exporting, "export probe runs while exporting");
+  assert(exportProbe.during?.insets.insetRight === 0 && exportProbe.during?.insets.insetBottom === 0, "export keeps zero CSS panel inset");
+  assert(
+    exportProbe.during?.camera?.width === exportProbe.during?.camera?.fullWidth,
+    "export keeps full-width camera rect",
+    JSON.stringify(exportProbe.during?.camera)
+  );
+  assert(exportProbe.after?.insets.insetRight > 0, "export restore returns panel-aware CSS inset");
+  assert(exportProbe.after?.camera?.width < exportProbe.after?.camera?.fullWidth, "export restore returns panel-aware camera rect");
+
+  const exportPosterBytes = await page.evaluate(async () => {
+    const blob = await window.__studyTestHooks.exportPosterBlob({ scale: 2, includeExportMarker: false });
+    const buf = await blob.arrayBuffer();
+    return Array.from(new Uint8Array(buf));
+  });
+  writeFileSync(join(screenshotDir, "study-poster-export-ipad-landscape-after.png"), Buffer.from(exportPosterBytes));
+
+  // Dimensional callouts: visible wide, hidden at collision breakpoints
+  await page.evaluate(() => {
+    const cb = document.getElementById("studyPosterMode");
+    if (cb.checked) cb.click();
+  });
   await sleep(200);
-  await page.click("#studyModeEnabled");
+  await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+  await page.evaluate(() => {
+    window.__studyTestHooks.setPanelOpen(false);
+    window.dispatchEvent(new Event("resize"));
+    window.__studyTestHooks.getStudyController().frameStudy();
+  });
+  await sleep(400);
+  const wideCallouts = await page.evaluate(() => window.__studyTestHooks.getCalloutVisibility());
+  assert(wideCallouts.visible, "dimensional callouts visible in wide layout with panel closed", JSON.stringify(wideCallouts));
+
+  await page.setViewport({ width: 1000, height: 800, deviceScaleFactor: 1 });
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("resize"));
+    window.__studyTestHooks.getStudyController().frameStudy();
+  });
+  await sleep(300);
+  const narrowCallouts = await page.evaluate(() => window.__studyTestHooks.getCalloutVisibility());
+  assert(!narrowCallouts.visible, "dimensional callouts hidden below 1100px breakpoint", JSON.stringify(narrowCallouts));
+
+  await page.setViewport({ width: 2048, height: 1536, deviceScaleFactor: 1 });
+  await page.evaluate(() => {
+    window.__studyTestHooks.setPanelOpen(true);
+    window.dispatchEvent(new Event("resize"));
+    window.__studyTestHooks.getStudyController().frameStudy();
+  });
+  await sleep(300);
+  const panelCallouts = await page.evaluate(() => window.__studyTestHooks.getCalloutVisibility());
+  assert(!panelCallouts.visible, "dimensional callouts hidden when right panel is open", JSON.stringify(panelCallouts));
+
+  // --- Safe-area alignment: normal study vs poster/export full frame ---
+  const iphoneSafe = { top: 59, right: 0, bottom: 34, left: 21 };
+  await page.setViewport({ width: 1179, height: 2556, deviceScaleFactor: 1 });
+  await page.evaluate((safe) => {
+    window.__studyTestHooks.setSafeAreaInsets(safe);
+    const cb = document.getElementById("studyPosterMode");
+    if (cb.checked) cb.click();
+    window.__studyTestHooks.setPanelOpen(false);
+    window.dispatchEvent(new Event("resize"));
+    window.__studyTestHooks.syncStudyViewLayout();
+    window.__studyTestHooks.getStudyController().frameStudy();
+  }, iphoneSafe);
+  await sleep(400);
+  const safeAreaNormal = await page.evaluate(() => {
+    const camera = window.__studyTestHooks.getCameraAvailableRect();
+    const poster = window.__studyTestHooks.getPosterRootRect();
+    const insets = window.__studyTestHooks.getStudyPosterInsets();
+    return { camera, poster, insets };
+  });
+  assert(safeAreaNormal.insets.insetTop === iphoneSafe.top, "CSS top inset matches iPhone safe area", String(safeAreaNormal.insets.insetTop));
+  assert(safeAreaNormal.insets.insetLeft === iphoneSafe.left, "CSS left inset matches iPhone safe area", String(safeAreaNormal.insets.insetLeft));
+  assert(
+    Math.abs(safeAreaNormal.poster.top - safeAreaNormal.camera.y) < 2,
+    "poster overlay top aligns with camera available rect",
+    `poster=${safeAreaNormal.poster?.top} camera=${safeAreaNormal.camera?.y}`
+  );
+  assert(
+    Math.abs(safeAreaNormal.poster.left - safeAreaNormal.camera.x) < 2,
+    "poster overlay left aligns with camera available rect",
+    `poster=${safeAreaNormal.poster?.left} camera=${safeAreaNormal.camera?.x}`
+  );
+
+  await page.evaluate(() => {
+    const cb = document.getElementById("studyPosterMode");
+    if (!cb.checked) cb.click();
+    window.dispatchEvent(new Event("resize"));
+    window.__studyTestHooks.syncStudyViewLayout();
+    window.__studyTestHooks.getStudyController().frameStudy();
+  });
+  await sleep(400);
+  const safeAreaPosterMode = await page.evaluate(() => {
+    const camera = window.__studyTestHooks.getCameraAvailableRect();
+    const poster = window.__studyTestHooks.getPosterRootRect();
+    const insets = window.__studyTestHooks.getStudyPosterInsets();
+    return {
+      camera,
+      poster,
+      insets,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+    };
+  });
+  assert(safeAreaPosterMode.insets.fullFrame, "poster mode uses full-frame layout with mocked safe area");
+  assert(safeAreaPosterMode.poster.top < 1 && safeAreaPosterMode.poster.left < 1, "poster mode overlay starts at viewport origin", JSON.stringify(safeAreaPosterMode.poster));
+  assert(safeAreaPosterMode.camera.x < 1 && safeAreaPosterMode.camera.y < 1, "poster mode camera rect starts at origin");
+  assert(
+    Math.abs(safeAreaPosterMode.camera.width - safeAreaPosterMode.innerWidth) < 2,
+    "poster mode camera uses full viewport width with safe area mocked",
+    String(safeAreaPosterMode.camera.width)
+  );
+
+  await page.evaluate(() => {
+    const cb = document.getElementById("studyPosterMode");
+    if (cb.checked) cb.click();
+    window.__studyTestHooks.clearSafeAreaInsets();
+    window.dispatchEvent(new Event("resize"));
+    window.__studyTestHooks.syncStudyViewLayout();
+    window.__studyTestHooks.getStudyController().frameStudy();
+  });
+  await sleep(200);
+  await page.setViewport({ width: 2048, height: 1536, deviceScaleFactor: 1 });
+  await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+  await sleep(200);
+
+  // Blueprint step styling remains distinct
+  await page.select("#studySelect", "merkaba-stellated-octahedron");
+  await sleep(400);
+  const blueprintStyles = await page.evaluate(() => window.__studyTestHooks.getBlueprintStepStyles());
+  assert(blueprintStyles.count >= 4, "merkaba blueprint steps render", String(blueprintStyles.count));
+  assert(blueprintStyles.hasInactive, "merkaba blueprint has inactive steps");
+  assert(blueprintStyles.activeDiffers, "active blueprint step is visually distinct", JSON.stringify(blueprintStyles));
+  await sleep(200);
+  await page.evaluate(() => {
+    const cb = document.getElementById("studyModeEnabled");
+    if (cb.checked) {
+      cb.checked = false;
+      cb.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  });
   await sleep(500);
   const restored = await page.evaluate(() => ({
     studyOff: !document.getElementById("studyModeEnabled").checked,

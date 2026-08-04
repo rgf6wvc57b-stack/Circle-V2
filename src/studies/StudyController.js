@@ -26,10 +26,13 @@ export class StudyController {
     this.posterRoot = deps.posterRoot;
     this.appRoot = deps.appRoot;
     this.panel = deps.panel;
+    this._onLayoutSync = deps.onLayoutSync ?? null;
     this.studyGroup = deps.studyGroup;
     this.studyRenderer = new StudySceneRenderer(this.studyGroup, { ...DEFAULT_STUDY_RENDER_OPTIONS });
     this.active = false;
     this.posterMode = false;
+    this._exporting = false;
+    this._exportLayoutProbe = null;
     this.studyId = MERKABA_STUDY.id;
     this.options = { ...DEFAULT_STUDY_RENDER_OPTIONS };
     this.sequenceStep = 0;
@@ -51,6 +54,14 @@ export class StudyController {
 
   listStudies() {
     return listStudies();
+  }
+
+  isExporting() {
+    return this._exporting;
+  }
+
+  setExportLayoutProbe(fn) {
+    this._exportLayoutProbe = fn;
   }
 
   isActive() {
@@ -81,11 +92,13 @@ export class StudyController {
   exit() {
     this.active = false;
     this.posterMode = false;
+    this._exporting = false;
     this.studyGroup.visible = false;
     this.#applyPosterBackground(false);
     this.posterRoot.hidden = true;
     this.posterRoot.setAttribute("aria-hidden", "true");
     this.appRoot.classList.remove("study-active", "study-poster-mode");
+    if (this._onLayoutSync) this._onLayoutSync();
     window.removeEventListener("resize", this._onResize);
     this.studyRenderer.clear();
   }
@@ -93,6 +106,7 @@ export class StudyController {
   setPosterMode(enabled) {
     this.posterMode = Boolean(enabled);
     this.appRoot.classList.toggle("study-poster-mode", this.active && this.posterMode);
+    if (this._onLayoutSync) this._onLayoutSync();
     this.syncPosterDOM();
     if (this.active) this.frameStudy();
   }
@@ -413,9 +427,12 @@ export class StudyController {
   frameStudy() {
     const box = new THREE.Box3().setFromObject(this.studyGroup);
     if (box.isEmpty()) return;
+    if (this._onLayoutSync) this._onLayoutSync();
+    const margin = this.posterMode ? 1.1 : 1.25;
     this.cameraController.frameBox(box, {
       animate: false,
-      margin: this.posterMode ? 1.35 : 1.65,
+      margin,
+      fitAvailableHeight: true,
     });
   }
 
@@ -454,18 +471,28 @@ export class StudyController {
   }
 
   async exportPoster({ scale = 3, download = true, forceHtmlCompositeFailure = false, includeExportMarker = false } = {}) {
-    return exportPosterPng({
-      renderer: this.renderer,
-      scene: this.scene,
-      camera: this.cameraController.getActiveCamera(),
-      posterRoot: this.posterRoot,
-      appRoot: this.appRoot,
-      scale,
-      filename: `${this.studyId}-poster.png`,
-      download,
-      forceHtmlCompositeFailure,
-      includeExportMarker,
-    });
+    this._exporting = true;
+    if (this._onLayoutSync) this._onLayoutSync();
+    this.frameStudy();
+    try {
+      if (this._exportLayoutProbe) this._exportLayoutProbe();
+      return await exportPosterPng({
+        renderer: this.renderer,
+        scene: this.scene,
+        camera: this.cameraController.getActiveCamera(),
+        posterRoot: this.posterRoot,
+        appRoot: this.appRoot,
+        scale,
+        filename: `${this.studyId}-poster.png`,
+        download,
+        forceHtmlCompositeFailure,
+        includeExportMarker,
+      });
+    } finally {
+      this._exporting = false;
+      if (this._onLayoutSync) this._onLayoutSync();
+      if (this.active) this.frameStudy();
+    }
   }
 
   #applyPosterBackground(active) {

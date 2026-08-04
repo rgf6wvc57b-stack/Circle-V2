@@ -46,16 +46,61 @@ try {
   await sleep(900);
   await page.screenshot({ path: join(outDir, "study-dimensional.png"), fullPage: false });
 
+  const responsiveViewports = [
+    { name: "ipad-landscape", width: 2048, height: 1536 },
+    { name: "ipad-portrait", width: 1536, height: 2048 },
+    { name: "iphone-portrait", width: 1179, height: 2556 },
+  ];
+  for (const vp of responsiveViewports) {
+    await page.setViewport({ width: vp.width, height: vp.height, deviceScaleFactor: 1 });
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("resize"));
+      window.__studyTestHooks.getStudyController().frameStudy();
+    });
+    await sleep(700);
+    await page.screenshot({
+      path: join(outDir, `study-dimensional-${vp.name}-after.png`),
+      fullPage: false,
+    });
+    console.log("Saved:", join(outDir, `study-dimensional-${vp.name}-after.png`));
+  }
+
+  await page.setViewport({ width: 2048, height: 1536, deviceScaleFactor: 1 });
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("resize"));
+    window.__studyTestHooks.getStudyController().frameStudy();
+  });
+  await sleep(500);
+
+  await page.evaluate(() => {
+    const cb = document.getElementById("studyPosterMode");
+    if (!cb.checked) cb.click();
+  });
+  await sleep(400);
+  await page.screenshot({
+    path: join(outDir, "study-poster-mode-ipad-landscape-after.png"),
+    fullPage: false,
+  });
+  console.log("Saved:", join(outDir, "study-poster-mode-ipad-landscape-after.png"));
+
+  await page.evaluate(() => {
+    const cb = document.getElementById("studyPosterMode");
+    if (cb.checked) cb.click();
+  });
+  await sleep(200);
+
   const posterBytes = await page.evaluate(async () => {
     const blob = await window.__studyTestHooks.exportPosterBlob({ scale: 2, includeExportMarker: false });
     const buf = await blob.arrayBuffer();
     return Array.from(new Uint8Array(buf));
   });
+  writeFileSync(join(outDir, "study-poster-export-ipad-landscape-after.png"), Buffer.from(posterBytes));
   writeFileSync(join(outDir, "study-poster-export.png"), Buffer.from(posterBytes));
 
   await browser.close();
   console.log("Saved:", join(outDir, "study-merkaba.png"));
   console.log("Saved:", join(outDir, "study-dimensional.png"));
+  console.log("Saved:", join(outDir, "study-poster-export-ipad-landscape-after.png"));
   console.log("Saved:", join(outDir, "study-poster-export.png"));
 } finally {
   preview.kill("SIGTERM");

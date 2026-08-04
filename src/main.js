@@ -80,6 +80,11 @@ import {
 } from "./app/mobileSheet.js";
 import { StudyController } from "./studies/StudyController.js";
 import { bindStudyControls } from "./app/studyModeUI.js";
+import {
+  applyStudyPosterInsets,
+  clearStudyPosterInsets,
+  computeStudyViewLayout,
+} from "./studies/studyLayout.js";
 const canvas = document.getElementById("viewport");
 const appRoot = document.getElementById("app");
 
@@ -820,6 +825,7 @@ const studyController = new StudyController({
   appRoot,
   panel: document.getElementById("panel"),
   studyGroup,
+  onLayoutSync: () => syncStudyViewLayout(),
 });
 
 function syncStudyVisibility() {
@@ -951,6 +957,10 @@ function computeDesignBox() {
 }
 
 function syncViewLayout() {
+  if (studyController.isActive()) {
+    return syncStudyViewLayout();
+  }
+
   const fullWidth = window.innerWidth;
   const fullHeight = window.innerHeight;
   const panelEl = document.getElementById("panel");
@@ -967,6 +977,64 @@ function syncViewLayout() {
         : null,
   });
   cameraController.setAvailableViewRect(rect);
+  clearStudyPosterInsets(appRoot);
+  return rect;
+}
+
+function syncStudyViewLayout() {
+  if (!studyController.isActive()) {
+    clearStudyPosterInsets(appRoot);
+
+    const fullWidth = window.innerWidth;
+    const fullHeight = window.innerHeight;
+    const panelEl = document.getElementById("panel");
+    const tutorialCard = document.getElementById("tutorialCard");
+    const panelOpen = isMobileSheetLayout() ? true : ui.panelOpen;
+    const rect = computeAvailableViewRect({
+      fullWidth,
+      fullHeight,
+      panelEl,
+      panelOpen,
+      topOccluderEl:
+        tutorialCard && !tutorialCard.hidden && document.body.classList.contains("mobile-tutorial")
+          ? tutorialCard
+          : null,
+    });
+    cameraController.setAvailableViewRect(rect);
+    return rect;
+  }
+
+  const fullWidth = window.innerWidth;
+  const fullHeight = window.innerHeight;
+  const panelEl = document.getElementById("panel");
+  const tutorialCard = document.getElementById("tutorialCard");
+  const panelOpen = isMobileSheetLayout() ? true : ui.panelOpen;
+  const fullFrame = studyController.posterMode || studyController.isExporting();
+  appRoot.classList.toggle("study-poster-exporting", studyController.isExporting());
+  appRoot.classList.toggle("study-full-frame", fullFrame);
+
+  if (!fullFrame && panelOpen && panelEl) {
+    panelEl.style.removeProperty("visibility");
+    panelEl.style.removeProperty("opacity");
+    panelEl.style.removeProperty("transform");
+    panelEl.style.removeProperty("pointer-events");
+  }
+
+  const { rect, insets } = computeStudyViewLayout({
+    fullWidth,
+    fullHeight,
+    panelEl,
+    panelOpen,
+    posterMode: studyController.posterMode,
+    exporting: studyController.isExporting(),
+    topOccluderEl:
+      tutorialCard && !tutorialCard.hidden && document.body.classList.contains("mobile-tutorial")
+        ? tutorialCard
+        : null,
+  });
+
+  cameraController.setAvailableViewRect(rect);
+  applyStudyPosterInsets(appRoot, insets);
   return rect;
 }
 
@@ -2454,6 +2522,7 @@ if (getShowIntroOnOpen()) {
 }
 
 window.__studyTestHooks = {
+  syncStudyViewLayout: () => syncStudyViewLayout(),
   getStudyController: () => studyController,
   getRendererState: () => {
     const cssSize = new THREE.Vector2();
@@ -2533,6 +2602,224 @@ window.__studyTestHooks = {
   },
   countExportWraps: () =>
     document.querySelectorAll("[data-poster-export-wrap]").length,
+  getStudyPosterInsets: () => {
+    const app = document.getElementById("app");
+    const cs = app ? getComputedStyle(app) : getComputedStyle(document.documentElement);
+    return {
+      insetTop: parseFloat(cs.getPropertyValue("--study-panel-inset-top")) || 0,
+      insetLeft: parseFloat(cs.getPropertyValue("--study-panel-inset-left")) || 0,
+      insetRight: parseFloat(cs.getPropertyValue("--study-panel-inset-right")) || 0,
+      insetBottom: parseFloat(cs.getPropertyValue("--study-panel-inset-bottom")) || 0,
+      panelRight: app?.classList.contains("study-panel-right") ?? false,
+      panelBottom: app?.classList.contains("study-panel-bottom") ?? false,
+      fullFrame: app?.classList.contains("study-full-frame") ?? false,
+    };
+  },
+  getPosterRootRect: () => {
+    const el = document.querySelector(".study-poster-root");
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    return {
+      top: r.top,
+      left: r.left,
+      right: r.right,
+      bottom: r.bottom,
+      width: r.width,
+      height: r.height,
+      cssTop: style.top,
+      cssLeft: style.left,
+      cssRight: style.right,
+      cssBottom: style.bottom,
+    };
+  },
+  setSafeAreaInsets: ({ top = 0, right = 0, bottom = 0, left = 0 } = {}) => {
+    const root = document.documentElement;
+    root.style.setProperty("--sat", `${top}px`);
+    root.style.setProperty("--sar", `${right}px`);
+    root.style.setProperty("--sab", `${bottom}px`);
+    root.style.setProperty("--sal", `${left}px`);
+  },
+  clearSafeAreaInsets: () => {
+    const root = document.documentElement;
+    root.style.removeProperty("--sat");
+    root.style.removeProperty("--sar");
+    root.style.removeProperty("--sab");
+    root.style.removeProperty("--sal");
+  },
+  getCameraAvailableRect: () => {
+    const layout = cameraController._viewLayout;
+    if (!layout?.available) return null;
+    return {
+      x: layout.available.x,
+      y: layout.available.y,
+      width: layout.available.width,
+      height: layout.available.height,
+      fullWidth: layout.fullWidth,
+      fullHeight: layout.fullHeight,
+    };
+  },
+  getStudyLayoutState: () => {
+    const insets = window.__studyTestHooks.getStudyPosterInsets();
+    const camera = window.__studyTestHooks.getCameraAvailableRect();
+    return {
+      insets,
+      camera,
+      exporting: studyController.isExporting(),
+      posterMode: studyController.posterMode,
+    };
+  },
+  setPanelOpen: (open) => setPanelOpen(Boolean(open), { reframe: true }),
+  isPanelOpen: () => ui.panelOpen,
+  getPanelLayoutDebug: () => {
+    const panel = document.getElementById("panel");
+    const app = document.getElementById("app");
+    const pr = panel?.getBoundingClientRect();
+    const style = panel ? getComputedStyle(panel) : null;
+    return {
+      panelOpen: ui.panelOpen,
+      panelCollapsed: app?.classList.contains("panel-collapsed") ?? false,
+      studyPosterMode: app?.classList.contains("study-poster-mode") ?? false,
+      studyPosterExporting: app?.classList.contains("study-poster-exporting") ?? false,
+      rect: pr ? { left: pr.left, right: pr.right, width: pr.width, height: pr.height } : null,
+      visibility: style?.visibility ?? null,
+      transform: style?.transform ?? null,
+      innerWidth: window.innerWidth,
+    };
+  },
+  computeStudyLayoutPreview: () =>
+    computeStudyViewLayout({
+      fullWidth: window.innerWidth,
+      fullHeight: window.innerHeight,
+      panelEl: document.getElementById("panel"),
+      panelOpen: ui.panelOpen,
+      posterMode: studyController.posterMode,
+      exporting: studyController.isExporting(),
+    }),
+  getCalloutVisibility: () => {
+    const el = document.querySelector(".study-callouts");
+    if (!el) return { exists: false, visible: false };
+    const style = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    return {
+      exists: true,
+      visible: style.display !== "none" && style.visibility !== "hidden" && rect.width > 2 && rect.height > 2,
+      display: style.display,
+    };
+  },
+  getBlueprintStepStyles: () => {
+    const steps = [...document.querySelectorAll(".study-blueprint-step")];
+    const active = document.querySelector(".study-blueprint-step.active");
+    const inactive = steps.find((step) => !step.classList.contains("active"));
+    if (!steps.length || !active || !inactive) {
+      return { count: steps.length, hasActive: Boolean(active), hasInactive: Boolean(inactive) };
+    }
+    const base = getComputedStyle(inactive);
+    const activeCs = getComputedStyle(active);
+    return {
+      count: steps.length,
+      hasActive: true,
+      hasInactive: true,
+      baseBorder: base.borderColor,
+      baseBackground: base.backgroundColor,
+      activeBorder: activeCs.borderColor,
+      activeBackground: activeCs.backgroundColor,
+      activeDiffers:
+        activeCs.backgroundColor !== base.backgroundColor || activeCs.borderColor !== base.borderColor,
+    };
+  },
+  probeExportLayout: async (opts = {}) => {
+    let captured = null;
+    studyController.setExportLayoutProbe(() => {
+      captured = window.__studyTestHooks.getStudyLayoutState();
+    });
+    try {
+      await studyController.exportPoster({
+        scale: opts.scale ?? 2,
+        download: false,
+        includeExportMarker: opts.includeExportMarker ?? false,
+      });
+    } finally {
+      studyController.setExportLayoutProbe(null);
+    }
+    studyController.setPosterMode(false);
+    window.__studyTestHooks.setPanelOpen(true);
+    document.getElementById("app")?.classList.remove("panel-collapsed");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    window.__studyTestHooks.syncStudyViewLayout();
+    studyController.frameStudy();
+    const after = window.__studyTestHooks.getStudyLayoutState();
+    const panelDebug = window.__studyTestHooks.getPanelLayoutDebug();
+    const layoutPreview = window.__studyTestHooks.computeStudyLayoutPreview();
+    return { during: captured, after, panelDebug, layoutPreview };
+  },
+  measureStudyElementOverlaps: (selectors) => {
+    const rects = selectors
+      .map((sel) => {
+        const el = document.querySelector(sel);
+        if (!el || el.hidden) return null;
+        const style = getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") return null;
+        const r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) return null;
+        return { sel, ...r };
+      })
+      .filter(Boolean);
+    const overlaps = [];
+    for (let i = 0; i < rects.length; i += 1) {
+      for (let j = i + 1; j < rects.length; j += 1) {
+        const a = rects[i];
+        const b = rects[j];
+        const w = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+        const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        if (w > 4 && h > 4) {
+          overlaps.push({ a: a.sel, b: b.sel, area: w * h });
+        }
+      }
+    }
+    return { rects: rects.map(({ sel, width, height, top, left }) => ({ sel, width, height, top, left })), overlaps };
+  },
+  measureStudyGeometrySize: () => {
+    const rect = syncViewLayout();
+    const ctrl = studyController;
+    ctrl.frameStudy();
+    webgl.render(scene, cameraController.getActiveCamera());
+    const canvas = webgl.domElement;
+    const w = canvas.width;
+    const h = canvas.height;
+    const copy = document.createElement("canvas");
+    copy.width = w;
+    copy.height = h;
+    const c2 = copy.getContext("2d");
+    if (!c2) return { goldSpan: 0, goldPixels: 0, availWidth: rect.width };
+    c2.drawImage(canvas, 0, 0);
+    const fullW = window.innerWidth;
+    const scanLeft = Math.max(0, Math.floor((rect.x / fullW) * w));
+    const scanWidth = Math.max(1, Math.floor((rect.width / fullW) * w));
+    const bandTop = Math.floor(h * 0.18);
+    const bandH = Math.floor(h * 0.55);
+    const image = c2.getImageData(scanLeft, bandTop, scanWidth, bandH);
+    let maxSpan = 0;
+    let goldPixels = 0;
+    for (let y = 0; y < bandH; y += 1) {
+      let currentSpan = 0;
+      for (let x = 0; x < scanWidth; x += 1) {
+        const i = (y * scanWidth + x) * 4;
+        const r = image.data[i];
+        const g = image.data[i + 1];
+        const b = image.data[i + 2];
+        const isGold = r > 120 && g > 85 && b < 130;
+        if (isGold) {
+          goldPixels += 1;
+          currentSpan += 1;
+          maxSpan = Math.max(maxSpan, currentSpan);
+        } else {
+          currentSpan = 0;
+        }
+      }
+    }
+    return { goldSpan: maxSpan, goldPixels, availWidth: rect.width, scanWidth };
+  },
 };
 
 animate();
