@@ -984,7 +984,6 @@ function syncViewLayout() {
 function syncStudyViewLayout() {
   if (!studyController.isActive()) {
     clearStudyPosterInsets(appRoot);
-    appRoot.classList.remove("study-full-frame", "study-poster-exporting");
 
     const fullWidth = window.innerWidth;
     const fullHeight = window.innerHeight;

@@ -4,7 +4,6 @@
  */
 import {
   computeAvailableViewRect,
-  readSafeAreaInsets,
 } from "../exploration/availableViewRect.js";
 
 /**
@@ -53,17 +52,12 @@ export function computeStudyViewLayout({
   const fullFrame = isStudyFullFrameLayout({ posterMode, exporting });
 
   if (fullFrame) {
-    const safe = safeArea || readSafeAreaInsets();
-    const x = Math.max(0, safe.left);
-    const y = Math.max(0, safe.top);
-    const width = Math.max(1, W - safe.left - safe.right);
-    const height = Math.max(1, H - safe.top - safe.bottom);
     return {
       rect: {
-        x,
-        y,
-        width,
-        height,
+        x: 0,
+        y: 0,
+        width: W,
+        height: H,
         fullWidth: W,
         fullHeight: H,
         panelOpen: false,
@@ -72,8 +66,8 @@ export function computeStudyViewLayout({
       insets: {
         insetRight: 0,
         insetBottom: 0,
-        availableWidth: width,
-        availableHeight: height,
+        availableWidth: W,
+        availableHeight: H,
         layout: "full",
       },
       fullFrame: true,

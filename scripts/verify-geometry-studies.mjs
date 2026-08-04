@@ -113,6 +113,14 @@ assert(/\.study-blueprint-step\.active/.test(posterCss), "blueprint active step 
   assert(exportLayout.fullFrame, "export layout is full frame");
   assert(exportLayout.insets.insetRight === 0 && exportLayout.insets.insetBottom === 0, "export uses zero panel inset");
   assert(exportLayout.rect.width === 2048, "export camera uses full viewport width");
+  const safeAreaExport = computeStudyViewLayout({
+    fullWidth: 1179,
+    fullHeight: 2556,
+    exporting: true,
+    safeArea: { top: 59, right: 0, bottom: 34, left: 0 },
+  });
+  assert(safeAreaExport.rect.width === 1179 && safeAreaExport.rect.height === 2556, "full-frame export ignores safe-area clipping");
+  assert(safeAreaExport.rect.x === 0 && safeAreaExport.rect.y === 0, "full-frame export rect starts at origin");
 }
 
 // --- Node: transparent/null background restore on study exit ---
