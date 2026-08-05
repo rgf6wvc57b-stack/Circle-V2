@@ -60,6 +60,31 @@ export function resolveConstructionStep(step, maxStep) {
 }
 
 /**
+ * Resolve construction step at app startup once engine max is known.
+ * Fresh sessions with no saved state show complete geometry when not in Construction Mode.
+ * @param {{
+ *   step: number,
+ *   maxStep: number,
+ *   stateLoaded: boolean,
+ *   constructionMode: boolean,
+ *   legacyFullStep?: boolean,
+ * }}
+ */
+export function resolveStartupConstructionStep({
+  step,
+  maxStep,
+  stateLoaded,
+  constructionMode,
+  legacyFullStep = false,
+}) {
+  const max = Math.max(0, Math.round(Number(maxStep) || 0));
+  if (max === 0) return 0;
+  if (legacyFullStep || isLegacyFullConstructionStep(step)) return max;
+  if (!stateLoaded && !constructionMode) return max;
+  return resolveConstructionStep(step, max);
+}
+
+/**
  * Format step label as "current / total".
  * @param {number} step
  * @param {number} maxStep

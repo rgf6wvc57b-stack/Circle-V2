@@ -96,6 +96,7 @@ import {
   isInvalidConstructionStep,
   isLegacyFullConstructionStep,
   resolveConstructionStep,
+  resolveStartupConstructionStep,
   countVisibleSpheresAtStep,
 } from "./app/constructionStep.js";
 const canvas = document.getElementById("viewport");
@@ -1405,13 +1406,13 @@ function syncLabels() {
 
 function syncStepDisplay() {
   const state = player.getState();
-  const total = Math.max(0, state.totalSteps || getMaxConstructionStep());
+  const engineMax = getMaxConstructionStep();
+  const total = ui.constructionMode
+    ? Math.max(0, state.totalSteps || engineMax)
+    : engineMax;
   const current = ui.constructionMode
     ? clampConstructionStep(Math.max(1, state.displayStep || state.step || 1), total)
     : clampConstructionStep(ui.constructionStep, total);
-  if (!ui.constructionMode) {
-    ui.constructionStep = current;
-  }
   document.getElementById("stepCurrent").textContent = String(current);
   document.getElementById("stepTotal").textContent = String(total);
 
@@ -2638,7 +2639,7 @@ function animate() {
   }
 }
 // Initialize
-loadState();
+const stateLoaded = loadState();
 
 // Make sure the saved state uses valid Sets and defaults.
 if (!(ui.activeRenderLayers instanceof Set)) {
@@ -2656,7 +2657,6 @@ syncRenderLayerStyleUI();
 syncSphereColorUI();
 syncTreeViewUI();
 syncEndlessUI();
-syncConstructionUI();
 syncEvolutionUI();
 syncLabels();
 
@@ -2683,17 +2683,21 @@ engine.regenerate();
 engine.setActiveRenderLayers(ui.activeRenderLayers);
 applyAppearance();
 
-// Show the complete geometry when Construction Mode is off.
+// Show the complete geometry when Construction Mode is off (fresh startup or legacy full-step).
 const maxStep = engine.getMaxStep();
-const hadLegacyFullConstructionStep =
+const legacyFullStep =
   ui.pendingLegacyFullConstructionStep ||
   isLegacyFullConstructionStep(ui.constructionStep) ||
   peekLegacyFullConstructionStepInStorage();
-ui.constructionStep = hadLegacyFullConstructionStep
-  ? maxStep
-  : resolveConstructionStep(ui.constructionStep, maxStep);
+ui.constructionStep = resolveStartupConstructionStep({
+  step: ui.constructionStep,
+  maxStep,
+  stateLoaded,
+  constructionMode: ui.constructionMode,
+  legacyFullStep,
+});
 ui.pendingLegacyFullConstructionStep = false;
-if (hadLegacyFullConstructionStep) {
+if (legacyFullStep) {
   upgradeLegacyConstructionStepInStorage(maxStep);
   saveState();
 }
@@ -3035,6 +3039,9 @@ window.__studyTestHooks = {
 window.__constructionTestHooks = {
   getUiConstructionStep: () => ui.constructionStep,
   hadPendingLegacyFullConstructionStep: () => ui.pendingLegacyFullConstructionStep,
+  isConstructionMode: () => ui.constructionMode,
+  getGeometryId: () => ui.geometry,
+  getFullSphereCount: () => engine.getFullData()?.sphereCenters?.length ?? 0,
   applyStaticStep: (step) => showStaticStep(step, { reframe: false }),
   getEngineStep: () => engine.getStep(),
   getVisibleSphereCount: () => engine.getVisibleData()?.sphereCenters?.length ?? 0,

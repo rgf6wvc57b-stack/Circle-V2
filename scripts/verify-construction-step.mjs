@@ -15,6 +15,7 @@ import {
   isInvalidConstructionStep,
   isLegacyFullConstructionStep,
   resolveConstructionStep,
+  resolveStartupConstructionStep,
 } from "../src/engine/construction/constructionStep.js";
 import { ConstructionSystem, buildConstructionPlan } from "../src/engine/construction/ConstructionSystem.js";
 import { generateGeometry } from "../src/engine/generators/index.js";
@@ -43,6 +44,42 @@ assert(resolveConstructionStep(SENTINEL, 19) === 19, "resolve sentinel to engine
 assert(resolveConstructionStep(3, 10) === 3, "resolve preserves valid saved step");
 assert(resolveConstructionStep(NaN, 10) === 10, "resolve non-finite to max");
 assert(resolveConstructionStep(-4, 10) === 0, "resolve negative to 0");
+assert(
+  resolveStartupConstructionStep({
+    step: 1,
+    maxStep: 2,
+    stateLoaded: false,
+    constructionMode: false,
+  }) === 2,
+  "fresh startup without saved state shows full geometry"
+);
+assert(
+  resolveStartupConstructionStep({
+    step: 1,
+    maxStep: 2,
+    stateLoaded: true,
+    constructionMode: false,
+  }) === 1,
+  "saved construction step is preserved on startup"
+);
+assert(
+  resolveStartupConstructionStep({
+    step: 5,
+    maxStep: 19,
+    stateLoaded: true,
+    constructionMode: false,
+  }) === 5,
+  "intentional mid-step saved state is preserved"
+);
+assert(
+  resolveStartupConstructionStep({
+    step: 1,
+    maxStep: 19,
+    stateLoaded: false,
+    constructionMode: true,
+  }) === 1,
+  "fresh startup in construction mode keeps step 1"
+);
 assert(clampConstructionStep(99, 10) === 10, "clamp high value to max");
 assert(clampConstructionStep(-3, 10) === 0, "clamp negative to 0");
 assert(clampConstructionStep(0, 10) === 0, "allow step 0");
@@ -274,6 +311,91 @@ try {
     }
   });
   assert(evolutionOk.ok, "evolution mode syncDiscovery does not throw", evolutionOk.error ?? "");
+
+  const freshPage = await browser.newPage();
+  await freshPage.evaluateOnNewDocument(() => {
+    localStorage.clear();
+    localStorage.setItem("geometry-explor:show-intro-on-open", "0");
+  });
+  await freshPage.goto(base, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await sleep(1200);
+
+  const freshStartup = await freshPage.evaluate(() => ({
+    geometry: document.getElementById("geometry")?.value ?? "",
+    uiStep: window.__constructionTestHooks.getUiConstructionStep(),
+    engineStep: window.__constructionTestHooks.getEngineStep(),
+    maxStep: window.__constructionTestHooks.getMaxConstructionStep(),
+    visibleSpheres: window.__constructionTestHooks.getVisibleSphereCount(),
+    fullSpheres: window.__constructionTestHooks.getFullSphereCount?.() ?? null,
+    constructionMode: window.__constructionTestHooks.isConstructionMode?.() ?? null,
+    label: window.__constructionTestHooks.getLayersLabel(),
+    hasSavedState: Boolean(localStorage.getItem("geometryExplorState_v1")),
+  }));
+
+  await freshPage.close();
+
+  assert(!freshStartup.hasSavedState, "fresh startup has no saved state yet");
+  assert(freshStartup.geometry === "vesicaPiscis", "fresh startup uses default Vesica Piscis");
+  assert(!freshStartup.constructionMode, "fresh startup is not in construction mode");
+  assert(
+    freshStartup.uiStep === freshStartup.maxStep,
+    "fresh startup ui step is max",
+    `${freshStartup.uiStep} vs ${freshStartup.maxStep}`
+  );
+  assert(
+    freshStartup.engineStep === freshStartup.maxStep,
+    "fresh startup engine step is max",
+    `${freshStartup.engineStep} vs ${freshStartup.maxStep}`
+  );
+  assert(
+    freshStartup.visibleSpheres === 2,
+    "fresh Vesica Piscis startup shows both spheres",
+    String(freshStartup.visibleSpheres)
+  );
+  assert(
+    freshStartup.fullSpheres === 2,
+    "Vesica Piscis has two sphere centers at full step",
+    String(freshStartup.fullSpheres)
+  );
+  assert(
+    freshStartup.label === `${freshStartup.maxStep} / ${freshStartup.maxStep}`,
+    "fresh startup label shows full step",
+    freshStartup.label
+  );
+
+  const savedMidPage = await browser.newPage();
+  await savedMidPage.evaluateOnNewDocument(() => {
+    localStorage.clear();
+    localStorage.setItem("geometry-explor:show-intro-on-open", "0");
+    localStorage.setItem(
+      "geometryExplorState_v1",
+      JSON.stringify({
+        geometry: "flowerOfLife",
+        constructionStep: 5,
+        activeRenderLayers: ["spheres"],
+        radius: 1.2,
+      })
+    );
+  });
+  await savedMidPage.goto(base, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await sleep(1200);
+
+  const savedMidStartup = await savedMidPage.evaluate(() => ({
+    uiStep: window.__constructionTestHooks.getUiConstructionStep(),
+    engineStep: window.__constructionTestHooks.getEngineStep(),
+    visibleSpheres: window.__constructionTestHooks.getVisibleSphereCount(),
+    expectedVisible: window.__constructionTestHooks.countExpectedVisibleSpheres(5),
+  }));
+
+  await savedMidPage.close();
+
+  assert(savedMidStartup.uiStep === 5, "saved mid-step preserved on startup", String(savedMidStartup.uiStep));
+  assert(savedMidStartup.engineStep === 5, "saved mid-step engine matches ui", String(savedMidStartup.engineStep));
+  assert(
+    savedMidStartup.visibleSpheres === savedMidStartup.expectedVisible,
+    "saved mid-step renders matching geometry",
+    `${savedMidStartup.visibleSpheres} vs ${savedMidStartup.expectedVisible}`
+  );
 
   const legacyPage = await browser.newPage();
   await legacyPage.evaluateOnNewDocument(() => {
