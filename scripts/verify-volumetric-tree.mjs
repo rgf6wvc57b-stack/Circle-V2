@@ -19,6 +19,10 @@ import {
   normalizeVolumetricOpts,
   volumetricZStats,
 } from "../src/engine/treeOfLife/volumetricLayout.js";
+import {
+  ensureVolumetricTreeRenderLayers,
+  VOLUMETRIC_TREE_DEFAULT_LAYERS,
+} from "../src/engine/renderer/uiRenderModes.js";
 import { TREE_VIEW_MODES } from "../src/engine/treeOfLife/modes.js";
 import { SEPHIROT_IDS } from "../src/engine/treeOfLife/graph.js";
 
@@ -529,6 +533,33 @@ function beginLayerAnimation(engine, completedLayers) {
   assert(player.completedSpheres === 0, "goToSphereCount clamps negative input to 0", String(player.completedSpheres));
 }
 
+// --- Volumetric render layers: circles-only selections auto-enable visible geometry ---
+{
+  assert(
+    ensureVolumetricTreeRenderLayers(["circles"]).join(",") ===
+      VOLUMETRIC_TREE_DEFAULT_LAYERS.join(","),
+    "circles-only selection upgrades to volumetric default layers"
+  );
+  assert(
+    ensureVolumetricTreeRenderLayers(["circles", "points"]).join(",") ===
+      VOLUMETRIC_TREE_DEFAULT_LAYERS.join(","),
+    "circles + points without spheres/lines upgrades to volumetric default layers"
+  );
+  assert(
+    ensureVolumetricTreeRenderLayers(["spheres", "circles"]).join(",") === "spheres",
+    "compatible spheres are preserved and circles are dropped"
+  );
+  assert(
+    ensureVolumetricTreeRenderLayers(["connections", "circles"]).join(",") === "connections",
+    "compatible connections are preserved and circles are dropped"
+  );
+  assert(
+    ensureVolumetricTreeRenderLayers(["spheres", "connections"]).join(",") ===
+      "spheres,connections",
+    "compatible custom volumetric layer selection is preserved"
+  );
+}
+
 await run("npm", ["run", "build"]);
 
 const port = "4312";
@@ -561,6 +592,111 @@ try {
 
   await page.select("#geometry", "treeOfLife");
   await sleep(400);
+
+  const circlesOnlyVolumetric = await page.evaluate(async () => {
+    window.__volumetricTestHooks.setRenderLayersOnly(["circles"]);
+    const sel = document.getElementById("treeViewMode");
+    sel.value = "volumetric";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    const max = window.__volumetricTestHooks.getMaxStep();
+    window.__constructionTestHooks.applyStaticStep(max);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const layers = window.__volumetricTestHooks.getActiveRenderLayers();
+    const data = window.__volumetricTestHooks.getConstructionData();
+    return {
+      layers,
+      sphereMeshes: window.__volumetricTestHooks.countSceneSphereMeshes(),
+      connectionMeshes: window.__volumetricTestHooks.countSceneConnectionMeshes(),
+      sephirahCount: data?.sphereCenters?.length ?? 0,
+      circleCenters: window.__volumetricTestHooks.getCircleCenterCount(),
+      axisVisible: window.__volumetricTestHooks.isAxisHelperVisible(),
+      viewMode: sel.value,
+    };
+  });
+
+  assert(circlesOnlyVolumetric.viewMode === "volumetric", "circles-only switch reaches volumetric mode");
+  assert(
+    !circlesOnlyVolumetric.layers.includes("circles"),
+    "circles layer is removed for volumetric mode",
+    circlesOnlyVolumetric.layers.join(",")
+  );
+  assert(
+    circlesOnlyVolumetric.layers.includes("spheres") ||
+      circlesOnlyVolumetric.layers.includes("connections"),
+    "compatible spheres or connections are enabled after circles-only switch",
+    circlesOnlyVolumetric.layers.join(",")
+  );
+  assert(
+    circlesOnlyVolumetric.sphereMeshes === 10,
+    "all 10 Sephirot spheres are visibly renderable",
+    String(circlesOnlyVolumetric.sphereMeshes)
+  );
+  assert(circlesOnlyVolumetric.sephirahCount === 10, "volumetric data still has 10 sphere centers");
+  assert(circlesOnlyVolumetric.circleCenters === 0, "volumetric mode still omits circle centers");
+  assert(
+    circlesOnlyVolumetric.sphereMeshes > 0 || circlesOnlyVolumetric.connectionMeshes > 0,
+    "tree geometry is visible beyond the axis helper alone"
+  );
+  assert(circlesOnlyVolumetric.axisVisible, "axis helper may remain visible with tree geometry");
+
+  const compatibleCustom = await page.evaluate(async () => {
+    window.__volumetricTestHooks.setRenderLayersOnly(["spheres", "connections"]);
+    const sel = document.getElementById("treeViewMode");
+    sel.value = "volumetric";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const max = window.__volumetricTestHooks.getMaxStep();
+    window.__constructionTestHooks.applyStaticStep(max);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    return {
+      layers: window.__volumetricTestHooks.getActiveRenderLayers(),
+      sphereMeshes: window.__volumetricTestHooks.countSceneSphereMeshes(),
+      connectionMeshes: window.__volumetricTestHooks.countSceneConnectionMeshes(),
+    };
+  });
+
+  assert(
+    compatibleCustom.layers.join(",") === "connections,spheres",
+    "compatible custom volumetric layer selection is preserved",
+    compatibleCustom.layers.join(",")
+  );
+  assert(compatibleCustom.sphereMeshes === 10, "custom spheres layer still renders 10 Sephirot");
+  assert(
+    compatibleCustom.connectionMeshes === 22,
+    "custom connections layer still renders 22 tree paths",
+    String(compatibleCustom.connectionMeshes)
+  );
+
+  const backToTraditional = await page.evaluate(async () => {
+    const sel = document.getElementById("treeViewMode");
+    sel.value = "traditional";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    const max = window.__constructionTestHooks.getMaxConstructionStep();
+    window.__constructionTestHooks.applyStaticStep(max);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const data = window.__volumetricTestHooks.getConstructionData();
+    return {
+      viewMode: sel.value,
+      layers: window.__volumetricTestHooks.getActiveRenderLayers(),
+      sphereMeshes: window.__volumetricTestHooks.countSceneSphereMeshes(),
+      circleCenters: data?.circleCenters?.length ?? 0,
+      zRange:
+        Math.max(...(data?.points?.filter((p) => p.meta?.role === "sephirah").map((p) => p.z) ?? [0])) -
+        Math.min(...(data?.points?.filter((p) => p.meta?.role === "sephirah").map((p) => p.z) ?? [0])),
+    };
+  });
+
+  assert(backToTraditional.viewMode === "traditional", "switch back to traditional mode works");
+  assert(backToTraditional.sphereMeshes === 10, "traditional mode still renders 10 Sephirot");
+  assert(
+    backToTraditional.circleCenters > 0,
+    "traditional mode restores circle overlays",
+    String(backToTraditional.circleCenters)
+  );
+  assert(Math.abs(backToTraditional.zRange) < 1e-6, "traditional mode returns planar Sephirot");
+
   await page.select("#treeViewMode", "volumetric");
   await sleep(800);
 

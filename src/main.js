@@ -34,6 +34,7 @@ import {
   RENDER_LAYERS,
   RENDER_LAYER_DRAW_ORDER,
   coerceToUiRenderMode,
+  ensureVolumetricTreeRenderLayers,
   isRenderLayerId,
   isUiRenderMode,
   layersEqual,
@@ -41,6 +42,8 @@ import {
   legacyModeFromLayers,
   normalizeRenderLayers,
   summarizeRenderLayers,
+  VOLUMETRIC_TREE_DEFAULT_LAYERS,
+  VOLUMETRIC_TREE_VISIBLE_LAYERS,
 } from "./engine/renderer/uiRenderModes.js";
 import {
   COLOR_MODE,
@@ -1701,7 +1704,7 @@ function syncEndlessUI() {
 
 function preferredRenderLayersForTree(viewMode) {
   if (viewMode === "volumetric") {
-    return [RENDER_LAYERS.spheres, RENDER_LAYERS.connections];
+    return [...VOLUMETRIC_TREE_DEFAULT_LAYERS];
   }
   return [
     RENDER_LAYERS.spheres,
@@ -1709,6 +1712,19 @@ function preferredRenderLayersForTree(viewMode) {
     RENDER_LAYERS.points,
     RENDER_LAYERS.connections,
   ];
+}
+
+function applyTreeViewModeRenderLayers(viewMode) {
+  if (viewMode === "volumetric") {
+    const source = ui.userPickedRenderer
+      ? ui.activeRenderLayers
+      : preferredRenderLayersForTree("volumetric");
+    ui.activeRenderLayers = new Set(ensureVolumetricTreeRenderLayers(source));
+  } else if (!ui.userPickedRenderer) {
+    ui.activeRenderLayers = new Set(preferredRenderLayersForTree(viewMode));
+  }
+  syncDerivedRenderMode();
+  syncRendererLayerUI();
 }
 
 function preferredRenderModeForTree(_viewMode) {
@@ -1916,11 +1932,7 @@ function bindControls() {
   document.getElementById("treeViewMode").addEventListener("change", (e) => {
     ui.treeViewMode = e.target.value;
     resetConstructionStep({ toMax: false });
-    if (!ui.userPickedRenderer) {
-      ui.activeRenderLayers = new Set(preferredRenderLayersForTree(ui.treeViewMode));
-      syncDerivedRenderMode();
-      syncRendererLayerUI();
-    }
+    applyTreeViewModeRenderLayers(ui.treeViewMode);
     if (ui.treeViewMode === "traditional") ui.pathThickness = 0.75;
     else if (ui.treeViewMode === "spatial") ui.pathThickness = 1.4;
     else if (ui.treeViewMode === "volumetric") {
@@ -2728,6 +2740,13 @@ if (ui.geometry === "treeOfLife") {
 }
 
 engine.regenerate();
+if (ui.geometry === "treeOfLife" && ui.treeViewMode === "volumetric") {
+  const ensured = ensureVolumetricTreeRenderLayers(ui.activeRenderLayers);
+  if (!layersEqual(ui.activeRenderLayers, ensured)) {
+    ui.activeRenderLayers = new Set(ensured);
+    syncDerivedRenderMode();
+  }
+}
 engine.setActiveRenderLayers(ui.activeRenderLayers);
 applyAppearance();
 
@@ -3147,6 +3166,24 @@ window.__volumetricTestHooks = {
   getGeneratorSphereRadius: () => engine.getFullData()?.sphereCenters?.[0]?.radius ?? null,
   getConstructionRadius: () => engine.getVisibleData()?.sphereCenters?.[0]?.radius ?? null,
   isAxisHelperVisible: () => axisHelper.visible,
+  getActiveRenderLayers: () => [...ui.activeRenderLayers].sort(),
+  setRenderLayersOnly: (layers) => {
+    applyActiveRenderLayers(layers, { userPicked: true });
+  },
+  countSceneSphereMeshes: () => {
+    let count = 0;
+    designGroup.traverse((obj) => {
+      if (obj.userData?.kind === "sphere") count += 1;
+    });
+    return count;
+  },
+  countSceneConnectionMeshes: () => {
+    let count = 0;
+    designGroup.traverse((obj) => {
+      if (obj.userData?.kind === "line") count += 1;
+    });
+    return count;
+  },
   getCircleCenterCount: () =>
     (engine.getVisibleData() ?? engine.getFullData())?.circleCenters?.length ?? 0,
   enableCirclesLayer: () => {
