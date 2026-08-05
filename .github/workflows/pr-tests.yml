@@ -49,6 +49,15 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Build
+        run: npm run build
+
+      - name: Run geometry studies tests
+        run: npm run test:geometry-studies
+
+      - name: Run calm framing tests
+        run: npm run test:framing-calm
+
       - name: Run volumetric tree tests
         run: npm run test:volumetric-tree
 

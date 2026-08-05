@@ -72,12 +72,12 @@ export function buildGeometricTreeLayout(radius, opts = {}) {
 
   const sephirotById = new Map(sephirot.map((s) => [s.id, s]));
 
-  // Construction radius: median of the 22 path lengths — equal-radius scaffold
-  // that preserves Tree proportions while enabling compass intersections.
+  // Construction radius: median XY path length — equal-radius scaffold circles
+  // live in the XY plane, so Z separation must not inflate the radius.
   const pathLengths = graph.paths.map((p) => {
     const a = sephirotById.get(p.from);
     const b = sephirotById.get(p.to);
-    return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+    return Math.hypot(a.x - b.x, a.y - b.y);
   });
   pathLengths.sort((a, b) => a - b);
   const constructionRadius = pathLengths[Math.floor(pathLengths.length / 2)];

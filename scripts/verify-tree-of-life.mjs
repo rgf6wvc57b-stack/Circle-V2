@@ -237,6 +237,51 @@ assert(
       `intersection ${ix.id} uses parent plane Z, not averaged depth`
     );
   }
+
+  const sephirotById = new Map(layout.sephirot.map((s) => [s.id, s]));
+  const xyPathLengths = layout.paths
+    .map((p) => {
+      const a = sephirotById.get(p.from);
+      const b = sephirotById.get(p.to);
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    })
+    .sort((a, b) => a - b);
+  const expectedXYRadius = xyPathLengths[Math.floor(xyPathLengths.length / 2)];
+  assert(
+    Math.abs(layout.constructionRadius - expectedXYRadius) < 1e-9,
+    "construction radius uses XY-only path distances",
+    `${layout.constructionRadius} vs ${expectedXYRadius}`
+  );
+
+  const amplifiedById = new Map(
+    layout.sephirot.map((s) => [s.id, { ...s, z: s.z * 8 }])
+  );
+  const amplifiedXYLengths = layout.paths
+    .map((p) => {
+      const a = amplifiedById.get(p.from);
+      const b = amplifiedById.get(p.to);
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    })
+    .sort((a, b) => a - b);
+  const amplified3DLengths = layout.paths
+    .map((p) => {
+      const a = amplifiedById.get(p.from);
+      const b = amplifiedById.get(p.to);
+      return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+    })
+    .sort((a, b) => a - b);
+  const amplifiedXYRadius = amplifiedXYLengths[Math.floor(amplifiedXYLengths.length / 2)];
+  const amplified3DRadius = amplified3DLengths[Math.floor(amplified3DLengths.length / 2)];
+  assert(
+    Math.abs(amplifiedXYRadius - layout.constructionRadius) < 1e-9,
+    "amplified Z separation does not change XY construction radius",
+    `${amplifiedXYRadius} vs ${layout.constructionRadius}`
+  );
+  assert(
+    Math.abs(amplified3DRadius - amplifiedXYRadius) > 1e-6,
+    "3D path median would differ when only Z is amplified",
+    `${amplified3DRadius} vs ${amplifiedXYRadius}`
+  );
 }
 
 // Planar traditional mode remains unchanged (coplanar z=0 construction still works)
