@@ -126,6 +126,37 @@ export function volumetricZStats(sephirot) {
   };
 }
 
+/**
+ * Non-empty Z layers mapped to 1-based construction steps (one layer per step).
+ * @param {object[][]} layerGroups
+ * @returns {{ layerIdx: number, step: number }[]}
+ */
+export function buildVolumetricLayerSteps(layerGroups) {
+  const steps = [];
+  layerGroups.forEach((nodes, layerIdx) => {
+    if (!nodes.length) return;
+    steps.push({ layerIdx, step: steps.length + 1 });
+  });
+  return steps;
+}
+
+/**
+ * Map volumetric layer index → 1-based construction step.
+ * @param {object[][]} layerGroups
+ */
+export function buildVolumetricLayerToStep(layerGroups) {
+  const map = new Map();
+  buildVolumetricLayerSteps(layerGroups).forEach(({ layerIdx, step }) => {
+    map.set(layerIdx, step);
+  });
+  return map;
+}
+
+/** Count of active construction steps (non-empty layers only). */
+export function countVolumetricConstructionSteps(layerGroups) {
+  return buildVolumetricLayerSteps(layerGroups).length;
+}
+
 function clamp(v, lo, hi) {
   return Math.min(hi, Math.max(lo, v));
 }

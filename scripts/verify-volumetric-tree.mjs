@@ -12,6 +12,7 @@ import { generateTreeOfLife } from "../src/engine/generators/index.js";
 import { buildTreeOfLifeConstructionPlan } from "../src/engine/construction/treeOfLifePlan.js";
 import {
   buildVolumetricTreeLayout,
+  countVolumetricConstructionSteps,
   normalizeVolumetricOpts,
   volumetricZStats,
 } from "../src/engine/treeOfLife/volumetricLayout.js";
@@ -89,18 +90,63 @@ const r = 1.2;
 
 // --- Construction plan: layer-by-layer reveal ---
 {
+  const volOpts = { layers: 5, zSpacing: 0.42 };
+  const layout = buildVolumetricTreeLayout(r, volOpts);
+  const expectedSteps = countVolumetricConstructionSteps(layout.layerGroups);
   const plan = buildTreeOfLifeConstructionPlan(r, {
     viewMode: "volumetric",
-    volumetric: { layers: 5, zSpacing: 0.42 },
+    volumetric: volOpts,
   });
   const drawOps = plan.operations.filter((op) => op.type === "drawSphere");
   assert(drawOps.length === 10, "construction plan draws 10 spheres");
+  assert(plan.sphereCount === expectedSteps, "plan step count matches active layers", `${plan.sphereCount} vs ${expectedSteps}`);
+  assert(plan.stepKind === "layer", "volumetric plan uses layer stepping");
+
   const edgeOps = plan.operations.filter((op) => op.type === "addEdge");
   assert(edgeOps.length === 22, "construction plan adds 22 path edges");
 
   const firstZ = drawOps[0]?.center?.z ?? 0;
   const lastZ = drawOps[drawOps.length - 1]?.center?.z ?? 0;
   assert(Math.abs(firstZ - lastZ) > 0.2, "construction layers span Z depth", `${firstZ.toFixed(2)} → ${lastZ.toFixed(2)}`);
+
+  for (let step = 1; step <= plan.sphereCount; step += 1) {
+    const endIdx = plan.operationIndexForSphereCount(step);
+    const prevIdx = step > 1 ? plan.operationIndexForSphereCount(step - 1) : -1;
+    const newDraws = plan.operations
+      .slice(prevIdx + 1, endIdx + 1)
+      .filter((op) => op.type === "drawSphere");
+    assert(newDraws.length >= 1, `layer step ${step} reveals at least one sphere`, String(newDraws.length));
+  }
+}
+
+// --- Generator + plan + engine totals stay aligned ---
+{
+  const volOpts = { layers: 5, zSpacing: 0.42, branchSpread: 1.0 };
+  const data = generateTreeOfLife(r, { viewMode: "volumetric", volumetric: volOpts });
+  const plan = buildTreeOfLifeConstructionPlan(r, { viewMode: "volumetric", volumetric: volOpts });
+  assert(data.maxStep === plan.sphereCount, "generator maxStep matches plan sphereCount", `${data.maxStep} vs ${plan.sphereCount}`);
+
+  const layout = buildVolumetricTreeLayout(r, volOpts);
+  assert(
+    data.maxStep === countVolumetricConstructionSteps(layout.layerGroups),
+    "maxStep equals non-empty layer count"
+  );
+
+  let prevCount = 0;
+  for (let step = 1; step <= data.maxStep; step += 1) {
+    const visible = data.points.filter((p) => p.meta?.role === "sephirah" && p.step <= step);
+    assert(visible.length > prevCount, `static step ${step} reveals new Sephirot`, `${prevCount} → ${visible.length}`);
+    prevCount = visible.length;
+  }
+}
+
+// --- Higher layer count skips empty Z slots ---
+{
+  const layout = buildVolumetricTreeLayout(r, { layers: 8, zSpacing: 0.42 });
+  const steps = countVolumetricConstructionSteps(layout.layerGroups);
+  assert(steps < 8, "eight nominal layers can collapse to fewer active steps", String(steps));
+  const plan = buildTreeOfLifeConstructionPlan(r, { viewMode: "volumetric", volumetric: { layers: 8 } });
+  assert(plan.sphereCount === steps, "plan uses active layer count with layers=8");
 }
 
 // --- UI wiring present ---
@@ -198,6 +244,16 @@ try {
   assert(browserStats.zRange > 0.5, "browser Z range substantial", browserStats.zRange.toFixed(3));
   assert(browserStats.distinctLevels >= 3, "browser has 3+ Z levels", String(browserStats.distinctLevels));
   assert(browserStats.axisVisible, "XYZ axis helper visible in volumetric mode");
+
+  const stepTotals = await page.evaluate(() => {
+    const max = window.__volumetricTestHooks?.getMaxStep?.() ?? 0;
+    const label = document.getElementById("layersValue")?.textContent ?? "";
+    const playerTotal = window.__volumetricTestHooks?.getPlayerTotalSteps?.() ?? 0;
+    return { max, label, playerTotal };
+  });
+  assert(stepTotals.max === 5, "browser max step is 5 layers", String(stepTotals.max));
+  assert(stepTotals.label === "1 / 5" || stepTotals.label.endsWith("/ 5"), "layers label uses layer total", stepTotals.label);
+  assert(stepTotals.playerTotal === 5, "construction player total matches layers", String(stepTotals.playerTotal));
 
   const presets = [
     { name: "front", preset: "front" },

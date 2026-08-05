@@ -1,5 +1,5 @@
 import { vec } from "./compass.js";
-import { finalizePlan } from "./applyPlan.js";
+import { finalizeLayerPlan, finalizePlan } from "./applyPlan.js";
 import { buildCanonicalTreeGraph } from "../treeOfLife/graph.js";
 import {
   buildGeometricTreeLayout,
@@ -11,6 +11,7 @@ import {
   buildVolumetricTreeLayout,
   normalizeVolumetricOpts,
 } from "../treeOfLife/volumetricLayout.js";
+
 
 /**
  * Tree of Life construction plan — all modes share the canonical 10+22 graph.
@@ -38,6 +39,7 @@ function buildVolumetricPlan(r, opts) {
   const operations = [];
   const placed = new Set();
   const pathOpsDone = new Set();
+  const layerEndOpIndices = [];
 
   const addReadyPaths = () => {
     layout.paths.forEach((path) => {
@@ -56,6 +58,7 @@ function buildVolumetricPlan(r, opts) {
   };
 
   layout.layerGroups.forEach((layerNodes, layerIdx) => {
+    if (!layerNodes.length) return;
     layerNodes.forEach((s) => {
       const point = vec(s.x, s.y, s.z);
       operations.push({
@@ -86,9 +89,10 @@ function buildVolumetricPlan(r, opts) {
       placed.add(s.id);
     });
     addReadyPaths();
+    layerEndOpIndices.push(operations.length - 1);
   });
 
-  return finalizePlan({
+  return finalizeLayerPlan({
     id: "treeOfLife",
     name: "Tree of Life (Volumetric)",
     radius: r,
@@ -97,7 +101,7 @@ function buildVolumetricPlan(r, opts) {
     variant: layout.variant,
     volumetric: volOpts,
     operations,
-  });
+  }, layerEndOpIndices);
 }
 
 function buildDiagramPlan(r, viewMode, opts) {

@@ -85,7 +85,11 @@ import {
   clearStudyPosterInsets,
   computeStudyViewLayout,
 } from "./studies/studyLayout.js";
-import { normalizeVolumetricOpts } from "./engine/treeOfLife/volumetricLayout.js";
+import {
+  buildVolumetricTreeLayout,
+  countVolumetricConstructionSteps,
+  normalizeVolumetricOpts,
+} from "./engine/treeOfLife/volumetricLayout.js";
 import {
   clampConstructionStep,
   formatConstructionStepLabel,
@@ -1317,7 +1321,7 @@ function resetConstructionStep({ toMax = false } = {}) {
 
 function syncDiscovery() {
   const data = engine.getVisibleData() ?? engine.getFullData();
-  const maxStep = getMaxConstructionStep();
+  let maxStep = getMaxConstructionStep();
   let step = clampConstructionStep(ui.constructionStep, maxStep);
   if (ui.evolutionMode) {
     const st = evolution.getState();
@@ -1511,8 +1515,17 @@ function syncVolumetricUI() {
   if (thickEl) thickEl.value = String(ui.volumetricConnectionThickness);
   if (thickVal) thickVal.textContent = ui.volumetricConnectionThickness.toFixed(2);
   if (hint && isVolumetric) {
+    const steps = countVolumetricConstructionSteps(
+      buildVolumetricTreeLayout(ui.radius, {
+        zSpacing: ui.volumetricZSpacing,
+        branchSpread: ui.volumetricBranchSpread,
+        layers: ui.volumetricLayers,
+        sphereRadiusRatio: ui.volumetricSphereRadiusRatio,
+        connectionThickness: ui.volumetricConnectionThickness,
+      }).layerGroups
+    );
     hint.textContent =
-      "Sphere centers occupy multiple Z levels. Construction playback reveals one depth layer at a time.";
+      `Construction reveals one Z-depth layer per step (${steps} steps). All Sephirot in a layer appear together; the Construction Step slider and playback use the same layer total.`;
   }
 }
 
@@ -2985,8 +2998,20 @@ window.__constructionTestHooks = {
   },
 };
 
+window.__evolutionTestHooks = {
+  syncDiscovery: () => syncDiscovery(),
+  enableEvolutionMode: () => {
+    const cb = document.getElementById("evolutionMode");
+    cb.checked = true;
+    cb.dispatchEvent(new Event("change", { bubbles: true }));
+  },
+  stepEvolutionForward: () => evolution.stepForward(),
+};
+
 window.__volumetricTestHooks = {
   getConstructionData: () => engine.getFullData(),
+  getMaxStep: () => engine.getMaxStep(),
+  getPlayerTotalSteps: () => player.getState().totalSteps,
   isAxisHelperVisible: () => axisHelper.visible,
   measureProjectedSpan: () => {
     const data = engine.getFullData();

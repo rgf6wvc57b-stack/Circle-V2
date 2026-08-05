@@ -7,7 +7,9 @@ import {
 import { normalizeTreeViewMode, TREE_VIEW_MODES } from "../treeOfLife/modes.js";
 import { applyPillarDepth, centerSephirot } from "../treeOfLife/spatialLayout.js";
 import {
+  buildVolumetricLayerToStep,
   buildVolumetricTreeLayout,
+  countVolumetricConstructionSteps,
   normalizeVolumetricOpts,
   volumetricZStats,
 } from "../treeOfLife/volumetricLayout.js";
@@ -68,8 +70,11 @@ function generateVolumetric(radius, opts) {
     },
   };
 
+  const layerToStep = buildVolumetricLayerToStep(layout.layerGroups);
+  const constructionSteps = countVolumetricConstructionSteps(layout.layerGroups);
+
   layout.sephirot.forEach((s) => {
-    pushSephirah(data, s, s.layer + 1, layout.sephiraRadius, {
+    pushSephirah(data, s, layerToStep.get(s.layer) ?? 1, layout.sephiraRadius, {
       layer: s.layer,
       volumetric: true,
     }, { includeCircles: false });
@@ -77,7 +82,7 @@ function generateVolumetric(radius, opts) {
 
   pushTreePaths(data, layout.paths);
   assertTree(data, graph, { allowDepth: true });
-  data.maxStep = layout.layers;
+  data.maxStep = constructionSteps;
   return data;
 }
 

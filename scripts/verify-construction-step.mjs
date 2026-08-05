@@ -112,6 +112,21 @@ try {
   assert(afterModeChange.step <= 10, "tree mode change resets step", String(afterModeChange.step));
   assert(!afterModeChange.label.includes(SENTINEL_STR), "mode change label has no sentinel");
 
+  const evolutionOk = await page.evaluate(async () => {
+    try {
+      window.__evolutionTestHooks.enableEvolutionMode();
+      await new Promise((r) => setTimeout(r, 500));
+      window.__evolutionTestHooks.syncDiscovery();
+      window.__evolutionTestHooks.stepEvolutionForward();
+      await new Promise((r) => setTimeout(r, 400));
+      window.__evolutionTestHooks.syncDiscovery();
+      return { ok: true, error: null };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
+  });
+  assert(evolutionOk.ok, "evolution mode syncDiscovery does not throw", evolutionOk.error ?? "");
+
   await browser.close();
 } finally {
   preview.kill("SIGTERM");

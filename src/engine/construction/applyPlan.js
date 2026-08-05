@@ -126,3 +126,19 @@ export function finalizePlan(plan) {
   };
   return plan;
 }
+
+/**
+ * Finalize a plan whose construction steps are full Z-depth layers (not per-sphere).
+ * @param {object} plan
+ * @param {number[]} layerEndOpIndices last operation index per layer step
+ */
+export function finalizeLayerPlan(plan, layerEndOpIndices) {
+  plan.sphereCount = layerEndOpIndices.length;
+  plan.stepKind = "layer";
+  plan.operationIndexForSphereCount = (count) => {
+    if (count <= 0) return -1;
+    const idx = Math.min(count, layerEndOpIndices.length) - 1;
+    return layerEndOpIndices[idx];
+  };
+  return plan;
+}
