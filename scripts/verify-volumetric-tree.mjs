@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { setTimeout as sleep } from "node:timers/promises";
+import * as THREE from "three";
+import { ConstructionEngine } from "../src/engine/index.js";
 import { generateTreeOfLife } from "../src/engine/generators/index.js";
 import { buildTreeOfLifeConstructionPlan } from "../src/engine/construction/treeOfLifePlan.js";
 import { applyConstructionPlan } from "../src/engine/construction/applyPlan.js";
@@ -297,6 +299,125 @@ const r = 1.2;
   mkdirSync(screenshotDir, { recursive: true });
   accessSync(screenshotDir, constants.W_OK);
   assert(true, "screenshot dir is writable", screenshotDir);
+}
+
+function layerDrawOps(plan, layerStep) {
+  const endIdx = plan.operationIndexForSphereCount(layerStep);
+  const prevIdx = layerStep > 1 ? plan.operationIndexForSphereCount(layerStep - 1) : -1;
+  return plan.operations.slice(prevIdx + 1, endIdx + 1).filter((op) => op.type === "drawSphere");
+}
+
+function drawProgressFor(engine, sphereId) {
+  return engine.renderer.drawProgress.get(sphereId);
+}
+
+function beginLayerAnimation(engine, completedLayers) {
+  const player = engine.player;
+  player.playing = false;
+  player.phase = "idle";
+  player.compassProgress = 0;
+  player.highlightTimer = 0;
+  player.activeOp = null;
+  player.activeOpIndex = -1;
+  player.activeDrawOps = [];
+  player.completedSpheres = completedLayers;
+  engine.clearDrawProgress();
+  engine.setActiveId(null);
+  player.play();
+  player.pause();
+}
+
+// --- ConstructionPlayer: multi-Sephirah layers animate together ---
+{
+  const volOpts = { layers: 5, zSpacing: 0.42, branchSpread: 1.0 };
+  const layout = buildVolumetricTreeLayout(r, volOpts);
+  const plan = buildTreeOfLifeConstructionPlan(r, { viewMode: "volumetric", volumetric: volOpts });
+  const group = new THREE.Group();
+  const engine = new ConstructionEngine(group);
+  engine.setGeometryOpts({ viewMode: "volumetric", volumetric: volOpts });
+  engine.setGeometry("treeOfLife");
+  engine.setConstructionMode(true);
+
+  assert(engine.player.plan?.stepKind === "layer", "player loaded volumetric layer plan");
+  assert(engine.getMaxStep() === plan.sphereCount, "engine maxStep matches layer count", `${engine.getMaxStep()} vs ${plan.sphereCount}`);
+
+  const multiSphereLayers = layout.layerGroups
+    .map((groupNodes, idx) => ({ idx, count: groupNodes.length }))
+    .filter((entry) => entry.count > 1);
+  assert(multiSphereLayers.length >= 2, "default layout has multiple multi-Sephirah layers", String(multiSphereLayers.length));
+
+  for (const { idx: layerIdx } of multiSphereLayers) {
+    const layerStep = layerIdx + 1;
+    const drawOps = layerDrawOps(plan, layerStep);
+    assert(drawOps.length >= 2, `layer ${layerStep} has multiple drawSphere ops`, String(drawOps.length));
+
+    beginLayerAnimation(engine, layerStep - 1);
+    const player = engine.player;
+    assert(player.phase === "drawing", `layer ${layerStep} enters drawing phase`, player.phase);
+    assert(
+      player.activeDrawOps.length === drawOps.length,
+      `layer ${layerStep} tracks every active draw op`,
+      `${player.activeDrawOps.length} vs ${drawOps.length}`
+    );
+
+    for (const op of drawOps) {
+      const progress = drawProgressFor(engine, op.sphereId);
+      assert(progress === 0, `layer ${layerStep} sphere ${op.pointId} starts hidden`, String(progress));
+    }
+
+    player.playing = true;
+    player.update(0.72);
+    assert(player.compassProgress > 0 && player.compassProgress < 1, `layer ${layerStep} mid-animation progress`, String(player.compassProgress));
+
+    for (const op of drawOps) {
+      const progress = drawProgressFor(engine, op.sphereId);
+      assert(
+        progress != null && progress > 0 && progress < 1,
+        `layer ${layerStep} sphere ${op.pointId} animates in sync mid-step`,
+        String(progress)
+      );
+    }
+
+    player.stepForward();
+    assert(player.phase === "highlight", `layer ${layerStep} completes draw together`, player.phase);
+    for (const op of drawOps) {
+      const progress = drawProgressFor(engine, op.sphereId);
+      assert(progress === 1, `layer ${layerStep} sphere ${op.pointId} fully drawn after step`, String(progress));
+    }
+
+    player.stepForward();
+    assert(player.completedSpheres === layerStep, `layer ${layerStep} increments completed layer count`, String(player.completedSpheres));
+    assert(engine.getStep() === layerStep, `engine step matches completed layer ${layerStep}`, String(engine.getStep()));
+  }
+
+  engine.player.goToSphereCount(plan.sphereCount);
+  const finalVisible = engine.getVisibleData();
+  const expectedFinal = applyConstructionPlan(plan, plan.operationIndexForSphereCount(plan.sphereCount));
+  assert(
+    finalVisible.sphereCenters.length === expectedFinal.sphereCenters.length,
+    "completed player geometry has all spheres",
+    `${finalVisible.sphereCenters.length} vs ${expectedFinal.sphereCenters.length}`
+  );
+  const finalSphereIds = finalVisible.sphereCenters.map((s) => s.pointId).sort().join("|");
+  const expectedSphereIds = expectedFinal.sphereCenters.map((s) => s.pointId).sort().join("|");
+  assert(finalSphereIds === expectedSphereIds, "completed player sphere IDs match plan");
+  assert(
+    finalVisible.edges.filter((e) => e.meta?.kind === "treePath").length === 22,
+    "completed player shows all tree paths",
+    String(finalVisible.edges.length)
+  );
+
+  const flowerGroup = new THREE.Group();
+  const flowerEngine = new ConstructionEngine(flowerGroup);
+  flowerEngine.setGeometry("flowerOfLife");
+  flowerEngine.setConstructionMode(true);
+  beginLayerAnimation(flowerEngine, 2);
+  assert(
+    flowerEngine.player.activeDrawOps.length === 1,
+    "non-layer flower plan still animates one sphere per step",
+    String(flowerEngine.player.activeDrawOps.length)
+  );
+  assert(flowerEngine.player.plan?.stepKind !== "layer", "flower plan is not layer-stepped");
 }
 
 await run("npm", ["run", "build"]);

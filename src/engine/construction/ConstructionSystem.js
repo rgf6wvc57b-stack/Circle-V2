@@ -41,6 +41,17 @@ export class ConstructionSystem {
   setOperationCursor(opIndex) {
     if (!this.plan) return;
     this.operationCursor = Math.max(-1, Math.min(this.plan.operations.length - 1, opIndex));
+
+    if (this.plan.stepKind === "layer" && this.plan.layerEndOpIndices?.length) {
+      let step = 0;
+      const ends = this.plan.layerEndOpIndices;
+      for (let i = 0; i < ends.length; i += 1) {
+        if (this.operationCursor >= ends[i]) step = i + 1;
+      }
+      this.step = step;
+      return;
+    }
+
     let spheres = 0;
     for (let i = 0; i <= this.operationCursor; i += 1) {
       if (this.plan.operations[i].type === "drawSphere") spheres += 1;

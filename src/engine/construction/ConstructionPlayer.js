@@ -28,6 +28,8 @@ export class ConstructionPlayer {
     /** @type {object | null} */
     this.activeOp = null;
     this.activeOpIndex = -1;
+    /** @type {{ op: object, index: number }[]} active draw ops for the current step */
+    this.activeDrawOps = [];
     this.animSpeed = 0.6;
     this.onChange = null;
   }
@@ -174,6 +176,7 @@ export class ConstructionPlayer {
     this.highlightTimer = 0;
     this.activeOp = null;
     this.activeOpIndex = -1;
+    this.activeDrawOps = [];
     this.completedSpheres = 0;
     this.engine.clearDrawProgress();
     this.engine.setActiveId(null);
@@ -246,6 +249,8 @@ export class ConstructionPlayer {
     this.compassProgress = 0;
     this.highlightTimer = 0;
     this.activeOp = null;
+    this.activeOpIndex = -1;
+    this.activeDrawOps = [];
     this.engine.clearDrawProgress();
     this.engine.setActiveId(null);
 
@@ -265,6 +270,8 @@ export class ConstructionPlayer {
     this.compassProgress = 0;
     this.highlightTimer = 0;
     this.activeOp = null;
+    this.activeOpIndex = -1;
+    this.activeDrawOps = [];
     this.engine.clearDrawProgress();
     this.engine.setActiveId(null);
     const target = Math.max(1, Math.min(this.plan.sphereCount, Number(count) || 1));
@@ -323,11 +330,20 @@ export class ConstructionPlayer {
     this.engine.redraw();
   }
 
+  #isLayerPlan() {
+    return this.plan?.stepKind === "layer";
+  }
+
   #beginNextSphere() {
     if (!this.plan) return;
     if (this.completedSpheres >= this.plan.sphereCount) {
       this.playing = false;
       this.phase = "idle";
+      return;
+    }
+
+    if (this.#isLayerPlan()) {
+      this.#beginNextLayerStep();
       return;
     }
 
@@ -360,6 +376,7 @@ export class ConstructionPlayer {
 
     // Include the sphere at full radius; compass arc starts at 0
     this.engine.setOperationCursor(drawIndex);
+    this.activeDrawOps = [{ op: drawOp, index: drawIndex }];
     this.activeOp = drawOp;
     this.activeOpIndex = drawIndex;
     this.compassProgress = 0;
@@ -372,14 +389,64 @@ export class ConstructionPlayer {
     console.info("Construction:", drawOp.justification);
   }
 
-  #applyCompassProgress() {
-    if (!this.activeOp) return;
-    const op = this.activeOp;
-    this.engine.setDrawProgress(op.sphereId, this.compassProgress);
-    this.engine.setDrawProgress(`circle-${op.pointId}`, this.compassProgress);
-    this.engine.setDrawProgress(op.pointId, this.compassProgress);
-    this.engine.setActiveId(op.pointId);
+  #beginNextLayerStep() {
+    const layerStep = this.completedSpheres + 1;
+    const endOp = this.plan.operationIndexForSphereCount(layerStep);
+    const startOp =
+      layerStep <= 1 ? 0 : this.plan.operationIndexForSphereCount(layerStep - 1) + 1;
+
+    const drawOps = [];
+    for (let i = startOp; i <= endOp; i += 1) {
+      const op = this.plan.operations[i];
+      if (op.type === "drawSphere") drawOps.push({ op, index: i });
+    }
+
+    if (!drawOps.length) {
+      this.playing = false;
+      this.phase = "idle";
+      return;
+    }
+
+    this.engine.setOperationCursor(endOp);
+    this.activeDrawOps = drawOps;
+    this.activeOp = drawOps[drawOps.length - 1].op;
+    this.activeOpIndex = drawOps[drawOps.length - 1].index;
+    this.compassProgress = 0;
+    this.phase = "drawing";
+    this.engine.clearDrawProgress();
+    drawOps.forEach(({ op }) => {
+      this.engine.setDrawProgress(op.sphereId, 0);
+      this.engine.setDrawProgress(`circle-${op.pointId}`, 0);
+      this.engine.setDrawProgress(op.pointId, 0);
+    });
+    this.engine.setActiveId(drawOps[0].op.pointId);
     this.engine.redraw();
+    console.info(
+      "Construction layer:",
+      drawOps.map(({ op }) => op.justification).join(" | ")
+    );
+  }
+
+  #activeDrawOpEntries() {
+    if (this.activeDrawOps.length) return this.activeDrawOps;
+    if (this.activeOp) return [{ op: this.activeOp, index: this.activeOpIndex }];
+    return [];
+  }
+
+  #applyDrawProgress(progress) {
+    const entries = this.#activeDrawOpEntries();
+    if (!entries.length) return;
+    entries.forEach(({ op }) => {
+      this.engine.setDrawProgress(op.sphereId, progress);
+      this.engine.setDrawProgress(`circle-${op.pointId}`, progress);
+      this.engine.setDrawProgress(op.pointId, progress);
+    });
+    this.engine.setActiveId(entries[entries.length - 1].op.pointId);
+    this.engine.redraw();
+  }
+
+  #applyCompassProgress() {
+    this.#applyDrawProgress(this.compassProgress);
   }
 
   #completeDrawInstant() {
@@ -393,12 +460,8 @@ export class ConstructionPlayer {
   }
 
   #applyHighlight() {
-    if (!this.activeOp) return;
-    this.engine.setDrawProgress(this.activeOp.sphereId, 1);
-    this.engine.setDrawProgress(`circle-${this.activeOp.pointId}`, 1);
-    this.engine.setDrawProgress(this.activeOp.pointId, 1);
-    this.engine.setActiveId(this.activeOp.pointId);
-    this.engine.redraw();
+    if (!this.#activeDrawOpEntries().length) return;
+    this.#applyDrawProgress(1);
   }
 
   #endHighlight() {
@@ -406,6 +469,7 @@ export class ConstructionPlayer {
     this.engine.setActiveId(null);
     this.activeOp = null;
     this.activeOpIndex = -1;
+    this.activeDrawOps = [];
     this.compassProgress = 0;
     this.highlightTimer = 0;
     this.phase = "idle";
