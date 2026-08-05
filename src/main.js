@@ -95,9 +95,11 @@ const TREE_VIEW_HINTS = {
   traditional:
     "Traditional: complete Kabbalistic diagram — 10 Sephirot and 22 paths in one plane.",
   spatial:
-    "Spatial: the same Tree coordinates as Traditional, drawn as 3D spheres and path tubes.",
+    "Spatial: the same planar Tree coordinates as Traditional, drawn as 3D spheres and path tubes.",
   geometric:
-    "Geometric: the same 10+22 Tree graph, plus construction circles, intersections, and optional FoL overlay.",
+    "Geometric: the same planar 10+22 Tree graph, plus construction circles, intersections, and optional FoL overlay.",
+  volumetric:
+    "Volumetric 3D Tree: Sephirot placed at explicit x, y, z coordinates across multiple depth layers — a true 3D branching structure.",
 };
 
 const RENDERING_PRESETS = {
@@ -129,6 +131,11 @@ const ui = {
    */
   renderMode: legacyModeFromLayers(DEFAULT_ACTIVE_RENDER_LAYERS),
   treeViewMode: "traditional",
+  volumetricZSpacing: 0.42,
+  volumetricBranchSpread: 1.0,
+  volumetricLayers: 5,
+  volumetricSphereRadiusRatio: 0.14,
+  volumetricConnectionThickness: 1.2,
   geometricFlags: {
     showTree: true,
     showConstructionGeometry: true,
@@ -451,6 +458,11 @@ function saveState() {
       renderLayerStyles: ui.renderLayerStyles,
       panelOpen: ui.panelOpen,
       treeViewMode: ui.treeViewMode,
+      volumetricZSpacing: ui.volumetricZSpacing,
+      volumetricBranchSpread: ui.volumetricBranchSpread,
+      volumetricLayers: ui.volumetricLayers,
+      volumetricSphereRadiusRatio: ui.volumetricSphereRadiusRatio,
+      volumetricConnectionThickness: ui.volumetricConnectionThickness,
       geometricFlags: ui.geometricFlags,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -814,6 +826,12 @@ scene.add(studyGroup);
 const explorationRoot = new THREE.Group();
 explorationRoot.name = "explorationRoot";
 scene.add(explorationRoot);
+
+const axisHelper = new THREE.AxesHelper(1.8);
+axisHelper.name = "volumetricAxisHelper";
+axisHelper.visible = false;
+axisHelper.renderOrder = 20;
+explorationRoot.add(axisHelper);
 
 const engine = new ConstructionEngine(designGroup);
 
@@ -1402,6 +1420,41 @@ function syncTreeViewUI() {
   if (hint) hint.textContent = TREE_VIEW_HINTS[ui.treeViewMode] || TREE_VIEW_HINTS.traditional;
   const flagsGroup = document.getElementById("geometricFlagsGroup");
   if (flagsGroup) flagsGroup.hidden = true;
+  syncVolumetricUI();
+}
+
+function syncVolumetricUI() {
+  const group = document.getElementById("volumetricControls");
+  const isVolumetric = ui.geometry === "treeOfLife" && ui.treeViewMode === "volumetric";
+  if (group) group.hidden = !isVolumetric;
+  axisHelper.visible = isVolumetric;
+
+  const zEl = document.getElementById("volumetricZSpacing");
+  const zVal = document.getElementById("volumetricZSpacingValue");
+  const spreadEl = document.getElementById("volumetricBranchSpread");
+  const spreadVal = document.getElementById("volumetricBranchSpreadValue");
+  const layersEl = document.getElementById("volumetricLayers");
+  const layersVal = document.getElementById("volumetricLayersValue");
+  const sphereEl = document.getElementById("volumetricSphereRadius");
+  const sphereVal = document.getElementById("volumetricSphereRadiusValue");
+  const thickEl = document.getElementById("volumetricConnectionThickness");
+  const thickVal = document.getElementById("volumetricConnectionThicknessValue");
+  const hint = document.getElementById("volumetricHint");
+
+  if (zEl) zEl.value = String(ui.volumetricZSpacing);
+  if (zVal) zVal.textContent = ui.volumetricZSpacing.toFixed(2);
+  if (spreadEl) spreadEl.value = String(ui.volumetricBranchSpread);
+  if (spreadVal) spreadVal.textContent = ui.volumetricBranchSpread.toFixed(2);
+  if (layersEl) layersEl.value = String(ui.volumetricLayers);
+  if (layersVal) layersVal.textContent = String(ui.volumetricLayers);
+  if (sphereEl) sphereEl.value = String(ui.volumetricSphereRadiusRatio);
+  if (sphereVal) sphereVal.textContent = (ui.radius * ui.volumetricSphereRadiusRatio).toFixed(2);
+  if (thickEl) thickEl.value = String(ui.volumetricConnectionThickness);
+  if (thickVal) thickVal.textContent = ui.volumetricConnectionThickness.toFixed(2);
+  if (hint && isVolumetric) {
+    hint.textContent =
+      "Sphere centers occupy multiple Z levels. Construction playback reveals one depth layer at a time.";
+  }
 }
 
 function endlessGeometryOpts() {
@@ -1493,7 +1546,10 @@ function syncEndlessUI() {
   }
 }
 
-function preferredRenderLayersForTree(_viewMode) {
+function preferredRenderLayersForTree(viewMode) {
+  if (viewMode === "volumetric") {
+    return [RENDER_LAYERS.spheres, RENDER_LAYERS.connections];
+  }
   return [
     RENDER_LAYERS.spheres,
     RENDER_LAYERS.circles,
@@ -1514,6 +1570,13 @@ function treeGeometryOpts() {
   return {
     viewMode: ui.treeViewMode,
     geometricFlags: { ...ui.geometricFlags },
+    volumetric: {
+      zSpacing: ui.volumetricZSpacing,
+      branchSpread: ui.volumetricBranchSpread,
+      layers: ui.volumetricLayers,
+      sphereRadiusRatio: ui.volumetricSphereRadiusRatio,
+      connectionThickness: ui.volumetricConnectionThickness,
+    },
   };
 }
 function rebuildFromGenerator() {
@@ -1708,12 +1771,20 @@ function bindControls() {
     }
     if (ui.treeViewMode === "traditional") ui.pathThickness = 0.75;
     else if (ui.treeViewMode === "spatial") ui.pathThickness = 1.4;
-    else ui.pathThickness = 1.1;
+    else if (ui.treeViewMode === "volumetric") {
+      ui.pathThickness = ui.volumetricConnectionThickness;
+    } else ui.pathThickness = 1.1;
+    if (ui.treeViewMode === "volumetric" && !ui.userPickedRenderer) {
+      ui.activeRenderLayers = new Set(preferredRenderLayersForTree("volumetric"));
+      syncDerivedRenderMode();
+      syncRendererLayerUI();
+    }
     patchRenderLayerStyle(ui.renderLayerStyles, "connections", {
       thickness: ui.pathThickness,
     });
     document.getElementById("pathThickness").value = String(ui.pathThickness);
     syncRenderLayerStyleUI();
+    syncVolumetricUI();
     rebuildFromGenerator();
     saveState();
   });
@@ -1732,6 +1803,33 @@ function bindControls() {
   bindGeoFlag("geoShowFlower", "showFlowerOverlay");
   bindGeoFlag("geoShowIntersections", "showIntersections");
   bindGeoFlag("geoShowSymmetry", "showSymmetryAxes");
+
+  const bindVolumetric = (id, key, { parse = Number, min, max, roundInt = false } = {}) => {
+    document.getElementById(id)?.addEventListener("input", (e) => {
+      let v = parse(e.target.value);
+      if (roundInt) v = Math.round(v);
+      if (typeof min === "number") v = Math.max(min, v);
+      if (typeof max === "number") v = Math.min(max, v);
+      ui[key] = v;
+      if (key === "volumetricConnectionThickness") {
+        ui.pathThickness = v;
+        patchRenderLayerStyle(ui.renderLayerStyles, "connections", { thickness: v });
+        const pathEl = document.getElementById("pathThickness");
+        if (pathEl) pathEl.value = String(v);
+        syncRenderLayerStyleUI();
+      }
+      syncVolumetricUI();
+      if (ui.geometry === "treeOfLife" && ui.treeViewMode === "volumetric") {
+        rebuildFromGenerator();
+      }
+      saveState();
+    });
+  };
+  bindVolumetric("volumetricZSpacing", "volumetricZSpacing", { min: 0.15, max: 1.2 });
+  bindVolumetric("volumetricBranchSpread", "volumetricBranchSpread", { min: 0.45, max: 2 });
+  bindVolumetric("volumetricLayers", "volumetricLayers", { min: 3, max: 8, roundInt: true });
+  bindVolumetric("volumetricSphereRadius", "volumetricSphereRadiusRatio", { min: 0.06, max: 0.35 });
+  bindVolumetric("volumetricConnectionThickness", "volumetricConnectionThickness", { min: 0.3, max: 2.5 });
 
   const summaryBtn = document.getElementById("rendererSummary");
   summaryBtn?.addEventListener("click", (e) => {
@@ -2819,6 +2917,28 @@ window.__studyTestHooks = {
       }
     }
     return { goldSpan: maxSpan, goldPixels, availWidth: rect.width, scanWidth };
+  },
+};
+
+window.__volumetricTestHooks = {
+  getConstructionData: () => engine.getFullData(),
+  isAxisHelperVisible: () => axisHelper.visible,
+  measureProjectedSpan: () => {
+    const data = engine.getFullData();
+    const seph = data?.points?.filter((p) => p.meta?.role === "sephirah") ?? [];
+    if (!seph.length) return null;
+    const camera = cameraController.getActiveCamera();
+    const projected = seph.map((p) => {
+      const v = new THREE.Vector3(p.x, p.y, p.z).project(camera);
+      return { x: (v.x * 0.5 + 0.5) * window.innerWidth, y: (-v.y * 0.5 + 0.5) * window.innerHeight };
+    });
+    const xs = projected.map((p) => p.x);
+    const ys = projected.map((p) => p.y);
+    return {
+      xSpan: Math.max(...xs) - Math.min(...xs),
+      ySpan: Math.max(...ys) - Math.min(...ys),
+      zSpan: Math.max(...seph.map((p) => p.z)) - Math.min(...seph.map((p) => p.z)),
+    };
   },
 };
 

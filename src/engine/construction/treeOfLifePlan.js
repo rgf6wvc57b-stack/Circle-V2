@@ -6,6 +6,10 @@ import {
   normalizeGeometricFlags,
 } from "../treeOfLife/geometricLayout.js";
 import { normalizeTreeViewMode, TREE_VIEW_MODES } from "../treeOfLife/modes.js";
+import {
+  buildVolumetricTreeLayout,
+  normalizeVolumetricOpts,
+} from "../treeOfLife/volumetricLayout.js";
 
 /**
  * Tree of Life construction plan — all modes share the canonical 10+22 graph.
@@ -15,10 +19,84 @@ import { normalizeTreeViewMode, TREE_VIEW_MODES } from "../treeOfLife/modes.js";
  */
 export function buildTreeOfLifeConstructionPlan(r, opts = {}) {
   const viewMode = normalizeTreeViewMode(opts.viewMode ?? TREE_VIEW_MODES.TRADITIONAL);
+  if (viewMode === TREE_VIEW_MODES.VOLUMETRIC) {
+    return buildVolumetricPlan(r, opts);
+  }
   if (viewMode === TREE_VIEW_MODES.GEOMETRIC) {
     return buildGeometricPlan(r, opts);
   }
   return buildDiagramPlan(r, viewMode, opts);
+}
+
+function buildVolumetricPlan(r, opts) {
+  const volOpts = normalizeVolumetricOpts({
+    ...opts.volumetric,
+    variant: opts.variant,
+  });
+  const layout = buildVolumetricTreeLayout(r, volOpts);
+  const operations = [];
+  const placed = new Set();
+  const pathOpsDone = new Set();
+
+  const addReadyPaths = () => {
+    layout.paths.forEach((path) => {
+      if (!placed.has(path.from) || !placed.has(path.to)) return;
+      if (pathOpsDone.has(path.id)) return;
+      pathOpsDone.add(path.id);
+      operations.push({
+        type: "addEdge",
+        edgeId: path.id,
+        from: path.from,
+        to: path.to,
+        label: path.label,
+        meta: { letter: path.letter, pathNumber: path.number, kind: "treePath" },
+      });
+    });
+  };
+
+  layout.layerGroups.forEach((layerNodes, layerIdx) => {
+    layerNodes.forEach((s) => {
+      const point = vec(s.x, s.y, s.z);
+      operations.push({
+        type: "placePoint",
+        pointId: s.id,
+        point,
+        label: s.label,
+        justification: `Volumetric layer ${layerIdx + 1}: place Sephirah ${s.number} (${s.label}) at (${s.x.toFixed(2)}, ${s.y.toFixed(2)}, ${s.z.toFixed(2)}).`,
+        determinedBy: {
+          kind: "treeOfLifeSephirah",
+          variant: layout.variant,
+          viewMode: TREE_VIEW_MODES.VOLUMETRIC,
+          number: s.number,
+          id: s.id,
+          role: "sephirah",
+          layer: layerIdx,
+        },
+      });
+      operations.push({
+        type: "drawSphere",
+        sphereId: `sphere-${s.id}`,
+        centerId: s.id,
+        pointId: s.id,
+        radius: layout.sephiraRadius,
+        justification: `Draw 3D Sephirah sphere for ${s.label} on volumetric layer ${layerIdx + 1}.`,
+        center: point,
+      });
+      placed.add(s.id);
+    });
+    addReadyPaths();
+  });
+
+  return finalizePlan({
+    id: "treeOfLife",
+    name: "Tree of Life (Volumetric)",
+    radius: r,
+    originId: "kether",
+    viewMode: TREE_VIEW_MODES.VOLUMETRIC,
+    variant: layout.variant,
+    volumetric: volOpts,
+    operations,
+  });
 }
 
 function buildDiagramPlan(r, viewMode, opts) {

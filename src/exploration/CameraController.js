@@ -382,10 +382,12 @@ export class CameraController {
 
     const dirs = {
       isometric: new THREE.Vector3(1, 1, 1),
+      perspective: new THREE.Vector3(1, 0.85, 1.15),
       front: new THREE.Vector3(0, 0, 1),
       back: new THREE.Vector3(0, 0, -1),
       left: new THREE.Vector3(-1, 0, 0),
       right: new THREE.Vector3(1, 0, 0),
+      side: new THREE.Vector3(1, 0.08, 0),
       top: new THREE.Vector3(0, 1, 0.0001),
       bottom: new THREE.Vector3(0, -1, 0.0001),
       reset: new THREE.Vector3(

@@ -22,6 +22,7 @@
     "test:renderer-dropdown": "node scripts/verify-renderer-dropdown-opaque.mjs",
     "test:endless": "node scripts/verify-endless-geometry.mjs",
     "test:geometry-studies": "node scripts/verify-geometry-studies.mjs",
+    "test:volumetric-tree": "node scripts/verify-volumetric-tree.mjs",
     "test:ui-cleanup": "node scripts/verify-hidden-ui.mjs",
     "test:dark-bg": "node scripts/verify-dark-background.mjs",
     "test:menu": "node scripts/verify-menu-toggle.mjs",
