@@ -20,6 +20,18 @@ export function nearlyEqual(a, b, eps = 1e-10) {
   return Math.abs(a - b) <= eps;
 }
 
+/** Z tolerance for treating two circle centers as lying on the same XY plane. */
+export const CIRCLE_INTERSECTION_Z_EPS = 1e-9;
+
+/**
+ * @param {{ z?: number }} c0
+ * @param {{ z?: number }} c1
+ * @param {number} [eps]
+ */
+export function circlesCoplanar(c0, c1, eps = CIRCLE_INTERSECTION_Z_EPS) {
+  return Math.abs((c0.z ?? 0) - (c1.z ?? 0)) <= eps;
+}
+
 export function pointsEqual(a, b, eps = 1e-10) {
   return dist(a, b) <= eps;
 }
@@ -29,8 +41,9 @@ export function pointsEqual(a, b, eps = 1e-10) {
  * Returns 0, 1, or 2 points.
  */
 export function intersectCirclesEqualRadius(c0, c1, r) {
+  if (!circlesCoplanar(c0, c1)) return [];
   const d = distXY(c0, c1);
-  const z = ((c0.z ?? 0) + (c1.z ?? 0)) / 2;
+  const z = c0.z ?? 0;
   if (d < 1e-12) return [];
   if (d > 2 * r + 1e-10) return [];
   if (nearlyEqual(d, 2 * r)) {

@@ -6,7 +6,7 @@
  * Construction circles, intersections, symmetry axes, and an optional
  * Flower-of-Life overlay are derived around that fixed structure.
  */
-import { intersectCirclesEqualRadius } from "../construction/compass.js";
+import { intersectCirclesEqualRadius, circlesCoplanar, CIRCLE_INTERSECTION_Z_EPS } from "../construction/compass.js";
 import { buildCanonicalTreeGraph } from "./graph.js";
 import { centerSephirot } from "./spatialLayout.js";
 import {
@@ -101,6 +101,7 @@ export function buildGeometricTreeLayout(radius, opts = {}) {
       for (let j = i + 1; j < sephirot.length; j += 1) {
         const a = sephirot[i];
         const b = sephirot[j];
+        if (!circlesCoplanar(a, b, CIRCLE_INTERSECTION_Z_EPS)) continue;
         const hits = intersectCirclesEqualRadius(a, b, constructionRadius);
         hits.forEach((h, k) => {
           if (seen.some((s) => Math.hypot(s.x - h.x, s.y - h.y) < constructionRadius * 0.04)) {

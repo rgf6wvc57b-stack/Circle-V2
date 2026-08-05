@@ -16,7 +16,7 @@ import { traditionalPaths } from "../src/engine/treeOfLife/layout.js";
 import { spatialZStats } from "../src/engine/treeOfLife/spatialLayout.js";
 import { volumetricZStats } from "../src/engine/treeOfLife/volumetricLayout.js";
 import { buildGeometricTreeLayout } from "../src/engine/treeOfLife/geometricLayout.js";
-import { intersectCirclesEqualRadius } from "../src/engine/construction/compass.js";
+import { intersectCirclesEqualRadius, circlesCoplanar, CIRCLE_INTERSECTION_Z_EPS } from "../src/engine/construction/compass.js";
 import { RENDER_MODES } from "../src/engine/renderer/GeometryRenderer.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -182,45 +182,76 @@ assert(
   "Geometric includes symmetry axes"
 );
 
-// --- XY-plane circle intersections ignore Z separation ---
+// --- Scaffold intersections: same XY plane only ---
 {
   const circleR = 1.2;
-  const c0 = { x: 0, y: 0, z: 0 };
-  const c1 = { x: 1.5, y: 0, z: 10 };
-  const hits = intersectCirclesEqualRadius(c0, c1, circleR);
-  assert(hits.length === 2, "Z-separated centers still intersect in XY plane", String(hits.length));
+  const samePlaneA = { x: 0, y: 0, z: 0.42 };
+  const samePlaneB = { x: 1.5, y: 0, z: 0.42 };
+  const sameHits = intersectCirclesEqualRadius(samePlaneA, samePlaneB, circleR);
+  assert(sameHits.length === 2, "same-plane circles still produce intersections", String(sameHits.length));
   assert(
-    hits.every((h) => Math.abs(h.z - 5) < 1e-9),
-    "intersection Z is average of parent centers",
-    hits.map((h) => h.z).join(",")
+    sameHits.every((h) => Math.abs(h.z - 0.42) < 1e-9),
+    "same-plane intersection Z matches the shared plane",
+    sameHits.map((h) => h.z).join(",")
   );
+
+  const crossA = { x: 0, y: 0, z: 0 };
+  const crossB = { x: 1.5, y: 0, z: 10 };
+  assert(
+    !circlesCoplanar(crossA, crossB, CIRCLE_INTERSECTION_Z_EPS),
+    "different-Z centers are not treated as coplanar"
+  );
+  const crossHits = intersectCirclesEqualRadius(crossA, crossB, circleR);
+  assert(crossHits.length === 0, "different-Z parallel circles produce no intersections", String(crossHits.length));
 
   const layout = buildGeometricTreeLayout(r, {
     flags: { showIntersections: true, showConstructionGeometry: true },
   });
   const sephirot = layout.sephirot;
   const cr = layout.constructionRadius;
-  let xyEligible = 0;
+  let crossPlaneWouldIntersect = 0;
   for (let i = 0; i < sephirot.length; i += 1) {
     for (let j = i + 1; j < sephirot.length; j += 1) {
       const a = sephirot[i];
       const b = sephirot[j];
+      if (circlesCoplanar(a, b, CIRCLE_INTERSECTION_Z_EPS)) continue;
       const dxy = Math.hypot(a.x - b.x, a.y - b.y);
-      const d3 = Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
-      if (dxy <= 2 * cr + 1e-10 && d3 > 2 * cr + 1e-10) xyEligible += 1;
+      if (dxy <= 2 * cr + 1e-10) crossPlaneWouldIntersect += 1;
     }
   }
-  assert(xyEligible >= 1, "geometric layout has pairs separated only by Z depth");
+  assert(crossPlaneWouldIntersect >= 1, "geometric layout has cross-plane pairs that would intersect in XY");
   assert(
-    layout.intersections.length >= xyEligible,
-    "geometric intersections include Z-suppressed XY pairs",
-    `${layout.intersections.length} vs ${xyEligible} eligible`
+    layout.intersections.every((ix) =>
+      sephirot.some((s) => Math.abs(ix.z - s.z) < CIRCLE_INTERSECTION_Z_EPS)
+    ),
+    "geometric intersections lie on a Sephirah Z plane"
   );
-  assert(
-    layout.intersections.every((ix) => Math.abs(ix.z) > 1e-6),
-    "geometric intersection points carry parent Z depth"
-  );
+  for (const ix of layout.intersections) {
+    const parents = sephirot.filter((s) => ix.parents?.includes(s.id));
+    assert(
+      parents.length === 2 && Math.abs(parents[0].z - parents[1].z) < CIRCLE_INTERSECTION_Z_EPS,
+      `intersection ${ix.id} parents share a Z plane`
+    );
+    assert(
+      Math.abs(ix.z - parents[0].z) < CIRCLE_INTERSECTION_Z_EPS,
+      `intersection ${ix.id} uses parent plane Z, not averaged depth`
+    );
+  }
 }
+
+// Planar traditional mode remains unchanged (coplanar z=0 construction still works)
+assert(
+  tradSephirot.every((p) => Math.abs(p.z) < 1e-12),
+  "Traditional planar mode keeps Sephirot at z=0"
+);
+assert(
+  intersectCirclesEqualRadius(
+    { x: 0, y: 0, z: 0 },
+    { x: 1.2, y: 0, z: 0 },
+    r
+  ).length === 2,
+  "planar z=0 circle intersections still work"
+);
 
 // Flower overlay optional — off by default, on when flagged
 const withFlower = generateTreeOfLife(r, {
