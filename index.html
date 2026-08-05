@@ -246,11 +246,31 @@
         <section class="control-group" id="treeViewModeGroup" hidden>
           <label for="treeViewMode">Tree viewing mode</label>
           <select id="treeViewMode">
-            <option value="traditional" selected>Traditional</option>
-            <option value="spatial">Spatial</option>
-            <option value="geometric">Geometric</option>
+            <option value="traditional" selected>Planar Diagram</option>
+            <option value="spatial">Pillar Depth (shallow 3D)</option>
+            <option value="geometric">Scaffold Depth (layered 3D)</option>
+            <option value="volumetric">Volumetric 3D Tree</option>
           </select>
-          <p class="hint" id="treeViewHint">Traditional: complete Kabbalistic diagram — 10 Sephirot and 22 paths in one plane.</p>
+          <p class="hint" id="treeViewHint">Planar Diagram: flat Kircher layout at z=0 with circle overlays.</p>
+        </section>
+
+        <section class="control-group" id="volumetricControls" hidden>
+          <p class="renderer-style-title">Volumetric 3D Tree</p>
+          <p class="hint" id="volumetricHint">Construction reveals one Z-depth layer per step. All Sephirot in a layer appear together.</p>
+          <label for="volumetricZSpacing">Z spacing / depth <span id="volumetricZSpacingValue">0.42</span></label>
+          <input id="volumetricZSpacing" class="touch-range" type="range" min="0.15" max="1.2" step="0.01" value="0.42" />
+          <label for="volumetricBranchSpread">Branch spread <span id="volumetricBranchSpreadValue">1.00</span></label>
+          <input id="volumetricBranchSpread" class="touch-range" type="range" min="0.45" max="2" step="0.01" value="1" />
+          <label for="volumetricLayers">Number of layers <span id="volumetricLayersValue">5</span></label>
+          <input id="volumetricLayers" class="touch-range" type="range" min="3" max="8" step="1" value="5" />
+          <label for="volumetricSphereRadius">Sphere radius ratio <span id="volumetricSphereRadiusValue">0.14</span></label>
+          <input id="volumetricSphereRadius" class="touch-range" type="range" min="0.06" max="0.35" step="0.01" value="0.14" />
+          <label for="volumetricConnectionThickness">Connection thickness <span id="volumetricConnectionThicknessValue">1.20</span></label>
+          <input id="volumetricConnectionThickness" class="touch-range" type="range" min="0.3" max="2.5" step="0.05" value="1.2" />
+          <div class="control-group row" style="margin-bottom: 0">
+            <label for="volumetricShowAxis">Show XYZ axis helper</label>
+            <input id="volumetricShowAxis" type="checkbox" checked />
+          </div>
         </section>
 
         <section class="control-group" id="endlessControls" hidden>
@@ -320,7 +340,7 @@
 
         <section id="legacyStepGroup" class="control-group">
           <label for="layers">Construction Step <span id="layersValue">1</span></label>
-          <input id="layers" type="range" min="1" max="7" step="1" value="1" />
+          <input id="layers" type="range" min="0" max="7" step="1" value="1" />
         </section>
 
         <section class="panel-section sphere-colors" id="sphereColorsSection">
@@ -447,8 +467,9 @@
           </section>
           <div class="preset-grid" id="viewPresets">
             <button type="button" data-preset="front">Front</button>
-            <button type="button" data-preset="top">Top</button>
             <button type="button" data-preset="side">Side</button>
+            <button type="button" data-preset="top">Top</button>
+            <button type="button" data-preset="perspective">Perspective</button>
             <button type="button" data-preset="reset">Reset</button>
           </div>
           <section class="control-group row">

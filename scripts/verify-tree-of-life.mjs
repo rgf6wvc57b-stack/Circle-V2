@@ -13,6 +13,10 @@ import {
   SEPHIROT_IDS,
 } from "../src/engine/treeOfLife/graph.js";
 import { traditionalPaths } from "../src/engine/treeOfLife/layout.js";
+import { spatialZStats } from "../src/engine/treeOfLife/spatialLayout.js";
+import { volumetricZStats } from "../src/engine/treeOfLife/volumetricLayout.js";
+import { buildGeometricTreeLayout } from "../src/engine/treeOfLife/geometricLayout.js";
+import { intersectCirclesEqualRadius, circlesCoplanar, CIRCLE_INTERSECTION_Z_EPS } from "../src/engine/construction/compass.js";
 import { RENDER_MODES } from "../src/engine/renderer/GeometryRenderer.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -77,11 +81,16 @@ const geometric = generateTreeOfLife(r, {
     showSymmetryAxes: true,
   },
 });
+const volumetric = generateTreeOfLife(r, {
+  viewMode: "volumetric",
+  volumetric: { zSpacing: 0.42, layers: 5 },
+});
 
 for (const [name, data] of [
   ["Traditional", traditional],
   ["Spatial", spatial],
   ["Geometric", geometric],
+  ["Volumetric", volumetric],
 ]) {
   const seph = sephirotOf(data);
   const paths = treePathsOf(data);
@@ -93,11 +102,33 @@ for (const [name, data] of [
   );
   assert(paths.every((p) => p.label), `${name}: every path has a label`);
   assert(seph.every((p) => p.label), `${name}: every Sephirah has a label`);
-  assert(seph.every((p) => Math.abs(p.z) < 1e-12), `${name}: Sephirot are coplanar (z=0)`);
   const cx = seph.reduce((s, p) => s + p.x, 0) / 10;
   const cy = seph.reduce((s, p) => s + p.y, 0) / 10;
-  assert(Math.hypot(cx, cy) < 1e-5, `${name}: centroid at origin`);
+  const cz = seph.reduce((s, p) => s + p.z, 0) / 10;
+  assert(Math.hypot(cx, cy, cz) < 1e-4, `${name}: centroid at origin`);
 }
+
+const tradSephirot = sephirotOf(traditional);
+assert(tradSephirot.every((p) => Math.abs(p.z) < 1e-12), "Traditional: Sephirot are coplanar (z=0)");
+assert(traditional.circleCenters.length >= 10, "Traditional has Sephirot circles");
+assert(traditional.meta.layoutKind === undefined || traditional.meta.viewMode === "traditional");
+
+const spatialStats = spatialZStats(sephirotOf(spatial));
+assert(spatialStats.distinctLevels >= 3, "Spatial: at least three Z levels", String(spatialStats.distinctLevels));
+assert(spatialStats.range > 0.2, "Spatial: meaningful pillar depth", spatialStats.range.toFixed(3));
+assert(spatial.circleCenters.length === 0, "Spatial: no planar circle overlays");
+
+const geoSephirot = sephirotOf(geometric);
+const geoZ = [...new Set(geoSephirot.map((p) => Math.round(p.z * 1000) / 1000))];
+assert(geoZ.length >= 3, "Geometric: layered Z depth", String(geoZ.length));
+assert(
+  geoSephirot.some((p) => Math.abs(p.z) > 0.05),
+  "Geometric: Sephirot use non-zero Z"
+);
+
+const volStats = volumetricZStats(sephirotOf(volumetric));
+assert(volStats.distinctLevels >= 3, "Volumetric: at least three Z levels");
+assert(volStats.range > 0.5, "Volumetric: substantial Z range");
 
 assert(
   connectivityOf(traditional) === connectivityOf(spatial),
@@ -112,26 +143,22 @@ assert(
   "Generated modes match canonical connectivity fingerprint"
 );
 
-// Traditional must include circle centers for all Sephirot AND path edges
-assert(traditional.circleCenters.length >= 10, "Traditional has Sephirot circles");
-assert(traditional.edges.filter((e) => e.meta?.kind === "treePath").length === 22, "Traditional emits 22 path edges");
-
-// Spatial uses same coords as Traditional
+// Traditional and Spatial share XY graph; Spatial adds pillar Z depth
 for (const id of SEPHIROT_IDS) {
   const a = traditional.points.find((p) => p.id === id);
   const b = spatial.points.find((p) => p.id === id);
-  const c = geometric.points.find((p) => p.id === id);
   assert(
-    Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) < 1e-9,
-    `Spatial preserves Traditional coordinates for ${id}`
+    Math.hypot(a.x - b.x, a.y - b.y) < 1e-6,
+    `Spatial preserves planar XY for ${id}`
   );
-  assert(
-    Math.hypot(a.x - c.x, a.y - c.y, a.z - c.z) < 1e-9,
-    `Geometric preserves Traditional coordinates for ${id}`
-  );
+  if (["binah", "geburah", "hod"].includes(id)) {
+    assert(b.z < -0.05, `Spatial: ${id} on Severity pillar (−Z)`);
+  } else if (["chokmah", "chesed", "netzach"].includes(id)) {
+    assert(b.z > 0.05, `Spatial: ${id} on Mercy pillar (+Z)`);
+  }
 }
 
-// Geometric must NOT use hex packing displacement — coords match Traditional
+// Geometric must NOT use hex packing displacement
 assert(
   geometric.meta.preservesTraditionalGraph === true,
   "Geometric meta marks traditional graph preservation"
@@ -153,6 +180,196 @@ assert(
 assert(
   geometric.edges.some((e) => e.meta?.kind === "symmetryAxis"),
   "Geometric includes symmetry axes"
+);
+
+// --- Scaffold intersections: same XY plane only ---
+{
+  const circleR = 1.2;
+  const samePlaneA = { x: 0, y: 0, z: 0.42 };
+  const samePlaneB = { x: 1.5, y: 0, z: 0.42 };
+  const sameHits = intersectCirclesEqualRadius(samePlaneA, samePlaneB, circleR);
+  assert(sameHits.length === 2, "same-plane circles still produce intersections", String(sameHits.length));
+  assert(
+    sameHits.every((h) => Math.abs(h.z - 0.42) < 1e-9),
+    "same-plane intersection Z matches the shared plane",
+    sameHits.map((h) => h.z).join(",")
+  );
+
+  const crossA = { x: 0, y: 0, z: 0 };
+  const crossB = { x: 1.5, y: 0, z: 10 };
+  assert(
+    !circlesCoplanar(crossA, crossB, CIRCLE_INTERSECTION_Z_EPS),
+    "different-Z centers are not treated as coplanar"
+  );
+  const crossHits = intersectCirclesEqualRadius(crossA, crossB, circleR);
+  assert(crossHits.length === 0, "different-Z parallel circles produce no intersections", String(crossHits.length));
+
+  const layout = buildGeometricTreeLayout(r, {
+    flags: { showIntersections: true, showConstructionGeometry: true },
+  });
+  const sephirot = layout.sephirot;
+  const cr = layout.constructionRadius;
+  let crossPlaneWouldIntersect = 0;
+  for (let i = 0; i < sephirot.length; i += 1) {
+    for (let j = i + 1; j < sephirot.length; j += 1) {
+      const a = sephirot[i];
+      const b = sephirot[j];
+      if (circlesCoplanar(a, b, CIRCLE_INTERSECTION_Z_EPS)) continue;
+      const dxy = Math.hypot(a.x - b.x, a.y - b.y);
+      if (dxy <= 2 * cr + 1e-10) crossPlaneWouldIntersect += 1;
+    }
+  }
+  assert(crossPlaneWouldIntersect >= 1, "geometric layout has cross-plane pairs that would intersect in XY");
+  assert(
+    layout.intersections.every((ix) =>
+      sephirot.some((s) => Math.abs(ix.z - s.z) < CIRCLE_INTERSECTION_Z_EPS)
+    ),
+    "geometric intersections lie on a Sephirah Z plane"
+  );
+  for (const ix of layout.intersections) {
+    const parents = sephirot.filter((s) => ix.parents?.includes(s.id));
+    assert(
+      parents.length === 2 && Math.abs(parents[0].z - parents[1].z) < CIRCLE_INTERSECTION_Z_EPS,
+      `intersection ${ix.id} parents share a Z plane`
+    );
+    assert(
+      Math.abs(ix.z - parents[0].z) < CIRCLE_INTERSECTION_Z_EPS,
+      `intersection ${ix.id} uses parent plane Z, not averaged depth`
+    );
+  }
+
+  const sephirotById = new Map(layout.sephirot.map((s) => [s.id, s]));
+  const xyPathLengths = layout.paths
+    .map((p) => {
+      const a = sephirotById.get(p.from);
+      const b = sephirotById.get(p.to);
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    })
+    .sort((a, b) => a - b);
+  const expectedXYRadius = xyPathLengths[Math.floor(xyPathLengths.length / 2)];
+  assert(
+    Math.abs(layout.constructionRadius - expectedXYRadius) < 1e-9,
+    "construction radius uses XY-only path distances",
+    `${layout.constructionRadius} vs ${expectedXYRadius}`
+  );
+
+  const amplifiedById = new Map(
+    layout.sephirot.map((s) => [s.id, { ...s, z: s.z * 8 }])
+  );
+  const amplifiedXYLengths = layout.paths
+    .map((p) => {
+      const a = amplifiedById.get(p.from);
+      const b = amplifiedById.get(p.to);
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    })
+    .sort((a, b) => a - b);
+  const amplified3DLengths = layout.paths
+    .map((p) => {
+      const a = amplifiedById.get(p.from);
+      const b = amplifiedById.get(p.to);
+      return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+    })
+    .sort((a, b) => a - b);
+  const amplifiedXYRadius = amplifiedXYLengths[Math.floor(amplifiedXYLengths.length / 2)];
+  const amplified3DRadius = amplified3DLengths[Math.floor(amplified3DLengths.length / 2)];
+  assert(
+    Math.abs(amplifiedXYRadius - layout.constructionRadius) < 1e-9,
+    "amplified Z separation does not change XY construction radius",
+    `${amplifiedXYRadius} vs ${layout.constructionRadius}`
+  );
+  assert(
+    Math.abs(amplified3DRadius - amplifiedXYRadius) > 1e-6,
+    "3D path median would differ when only Z is amplified",
+    `${amplified3DRadius} vs ${amplifiedXYRadius}`
+  );
+
+  const coincidenceTol = cr * 0.04;
+  const pointsCoincide3D = (a, b) =>
+    Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) < coincidenceTol;
+  const pointsCoincideXY = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) < coincidenceTol;
+
+  let rawHits = [];
+  for (let i = 0; i < sephirot.length; i += 1) {
+    for (let j = i + 1; j < sephirot.length; j += 1) {
+      const a = sephirot[i];
+      const b = sephirot[j];
+      if (!circlesCoplanar(a, b, CIRCLE_INTERSECTION_Z_EPS)) continue;
+      rawHits = rawHits.concat(intersectCirclesEqualRadius(a, b, cr));
+    }
+  }
+  const xyOnlyFiltered = rawHits.filter((h) => {
+    if (sephirot.some((s) => pointsCoincideXY(s, h))) return false;
+    return true;
+  });
+  assert(
+    layout.intersections.length > xyOnlyFiltered.length,
+    "XYZ coincidence keeps intersections that share XY with Sephirot on another Z layer",
+    `${layout.intersections.length} vs ${xyOnlyFiltered.length}`
+  );
+  assert(
+    layout.intersections.length === rawHits.length,
+    "all coplanar circle intersections are retained with XYZ deduplication",
+    `${layout.intersections.length} vs ${rawHits.length}`
+  );
+
+  const stackedSephirah = sephirot.find((s) =>
+    layout.intersections.some(
+      (ix) =>
+        pointsCoincideXY(s, ix) &&
+        !pointsCoincide3D(s, ix) &&
+        Math.abs(ix.z - s.z) > CIRCLE_INTERSECTION_Z_EPS
+    )
+  );
+  assert(
+    stackedSephirah,
+    "layout includes an intersection stacked in XY above/below a Sephirah"
+  );
+  const preservedIntersection = layout.intersections.find(
+    (ix) =>
+      stackedSephirah &&
+      pointsCoincideXY(stackedSephirah, ix) &&
+      !pointsCoincide3D(stackedSephirah, ix)
+  );
+  assert(
+    preservedIntersection,
+    "same-plane intersection survives when only XY matches a Sephirah on another Z layer",
+    preservedIntersection?.id ?? "none"
+  );
+
+  const generatedIntersections = geometric.points.filter((p) => p.meta?.role === "intersection");
+  assert(generatedIntersections.length > 0, "geometric generator emits intersection points");
+  assert(
+    generatedIntersections.every((p) => Math.abs(p.z) > 1e-6),
+    "generated scaffold intersections keep nonzero layout Z depth"
+  );
+  const layoutById = new Map(
+    buildGeometricTreeLayout(r, {
+      flags: { showIntersections: true, showConstructionGeometry: true },
+    }).intersections.map((ix) => [ix.id, ix])
+  );
+  for (const point of generatedIntersections) {
+    const source = layoutById.get(point.id);
+    assert(source, `generated intersection ${point.id} maps to layout intersection`);
+    assert(
+      Math.abs(point.z - source.z) < 1e-9,
+      `generated intersection ${point.id} preserves layout Z for rendering`,
+      `${point.z} vs ${source.z}`
+    );
+  }
+}
+
+// Planar traditional mode remains unchanged (coplanar z=0 construction still works)
+assert(
+  tradSephirot.every((p) => Math.abs(p.z) < 1e-12),
+  "Traditional planar mode keeps Sephirot at z=0"
+);
+assert(
+  intersectCirclesEqualRadius(
+    { x: 0, y: 0, z: 0 },
+    { x: 1.2, y: 0, z: 0 },
+    r
+  ).length === 2,
+  "planar z=0 circle intersections still work"
 );
 
 // Flower overlay optional — off by default, on when flagged

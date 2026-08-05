@@ -5,6 +5,14 @@ import {
   normalizeGeometricFlags,
 } from "../treeOfLife/geometricLayout.js";
 import { normalizeTreeViewMode, TREE_VIEW_MODES } from "../treeOfLife/modes.js";
+import { applyPillarDepth, centerSephirot } from "../treeOfLife/spatialLayout.js";
+import {
+  buildVolumetricLayerToStep,
+  buildVolumetricTreeLayout,
+  countVolumetricConstructionSteps,
+  normalizeVolumetricOpts,
+  volumetricZStats,
+} from "../treeOfLife/volumetricLayout.js";
 
 /**
  * Tree of Life generator — three viewing modes over one canonical graph.
@@ -12,17 +20,70 @@ import { normalizeTreeViewMode, TREE_VIEW_MODES } from "../treeOfLife/modes.js";
  * - traditional: 2D diagram — circles + 22 paths in one plane
  * - spatial: same coordinates — 3D spheres + path tubes
  * - geometric: same Tree graph + construction scaffold / optional FoL overlay
+ * - volumetric: explicit (x,y,z) Sephirot across multiple Z layers — true 3D tree
  *
  * @param {number} radius
- * @param {{ variant?: string, viewMode?: string, geometricFlags?: object }} [opts]
+ * @param {{ variant?: string, viewMode?: string, geometricFlags?: object, volumetric?: object }} [opts]
  */
 export function generateTreeOfLife(radius, opts = {}) {
   const viewMode = normalizeTreeViewMode(opts.viewMode ?? TREE_VIEW_MODES.TRADITIONAL);
 
+  if (viewMode === TREE_VIEW_MODES.VOLUMETRIC) {
+    return generateVolumetric(radius, opts);
+  }
   if (viewMode === TREE_VIEW_MODES.GEOMETRIC) {
     return generateGeometric(radius, opts);
   }
   return generateDiagram(radius, viewMode, opts);
+}
+
+function generateVolumetric(radius, opts) {
+  const volOpts = normalizeVolumetricOpts({
+    ...opts.volumetric,
+    variant: opts.variant,
+  });
+  const layout = buildVolumetricTreeLayout(radius, volOpts);
+  const graph = {
+    variant: layout.variant,
+    sephirot: layout.sephirot,
+    paths: layout.paths,
+    sephiraRadius: layout.sephiraRadius,
+  };
+
+  const data = createEmptyConstruction("treeOfLife", "Tree of Life", radius);
+  const zStats = volumetricZStats(layout.sephirot);
+  data.meta = {
+    kind: "treeOfLife",
+    viewMode: TREE_VIEW_MODES.VOLUMETRIC,
+    variant: layout.variant,
+    connectivity: treeConnectivityFingerprint({
+      sephirot: layout.sephirot,
+      paths: layout.paths,
+    }),
+    foundation: false,
+    volumetric: {
+      zSpacing: layout.zSpacing,
+      branchSpread: layout.branchSpread,
+      layers: layout.layers,
+      connectionThickness: layout.connectionThickness,
+      zStats,
+    },
+  };
+
+  const layerToStep = buildVolumetricLayerToStep(layout.layerGroups);
+  const constructionSteps = countVolumetricConstructionSteps(layout.layerGroups);
+
+  layout.sephirot.forEach((s) => {
+    pushSephirah(data, s, layerToStep.get(s.layer) ?? 1, layout.sephiraRadius, {
+      layer: s.layer,
+      volumetric: true,
+    }, { includeCircles: false });
+  });
+
+  pushTreePaths(data, layout.paths);
+  assertTree(data, graph, { allowDepth: true });
+  data.maxStep = constructionSteps;
+  return data;
 }
 
 function generateDiagram(radius, viewMode, opts) {
@@ -32,6 +93,11 @@ function generateDiagram(radius, viewMode, opts) {
     sephiraRadiusRatio: ratio,
   });
 
+  let sephirot = graph.sephirot;
+  if (viewMode === TREE_VIEW_MODES.SPATIAL) {
+    sephirot = centerSephirot(applyPillarDepth(graph.sephirot, radius, 0.22));
+  }
+
   const data = createEmptyConstruction("treeOfLife", "Tree of Life", radius);
   data.meta = {
     kind: "treeOfLife",
@@ -39,14 +105,16 @@ function generateDiagram(radius, viewMode, opts) {
     variant: graph.variant,
     connectivity: treeConnectivityFingerprint(graph),
     foundation: false,
+    layoutKind: viewMode === TREE_VIEW_MODES.SPATIAL ? "pillarDepth" : "planar",
   };
 
-  graph.sephirot.forEach((s, i) => {
-    pushSephirah(data, s, i + 1, graph.sephiraRadius);
+  const includeCircles = viewMode === TREE_VIEW_MODES.TRADITIONAL;
+  sephirot.forEach((s, i) => {
+    pushSephirah(data, s, i + 1, graph.sephiraRadius, {}, { includeCircles });
   });
 
   pushTreePaths(data, graph.paths);
-  assertTree(data, graph);
+  assertTree(data, { ...graph, sephirot }, { allowDepth: viewMode === TREE_VIEW_MODES.SPATIAL });
   data.maxStep = 10;
   return data;
 }
@@ -102,7 +170,7 @@ function generateGeometric(radius, opts) {
         id: ix.id,
         x: ix.x,
         y: ix.y,
-        z: 0,
+        z: ix.z,
         label: "",
         step: 20 + i,
         meta: { role: "intersection", parents: ix.parents },
@@ -166,12 +234,12 @@ function generateGeometric(radius, opts) {
     });
   }
 
-  assertTree(data, graph);
+  assertTree(data, graph, { allowDepth: true });
   data.maxStep = Math.max(10, ...data.points.map((p) => p.step));
   return data;
 }
 
-function pushSephirah(data, s, step, sphereRadius, extraMeta = {}) {
+function pushSephirah(data, s, step, sphereRadius, extraMeta = {}, { includeCircles = true } = {}) {
   data.points.push({
     id: s.id,
     x: s.x,
@@ -187,13 +255,15 @@ function pushSephirah(data, s, step, sphereRadius, extraMeta = {}) {
     radius: sphereRadius,
     meta: { role: "sephirah" },
   });
-  data.circleCenters.push({
-    id: `circle-${s.id}`,
-    pointId: s.id,
-    radius: sphereRadius,
-    normal: [0, 0, 1],
-    meta: { role: "sephirah" },
-  });
+  if (includeCircles) {
+    data.circleCenters.push({
+      id: `circle-${s.id}`,
+      pointId: s.id,
+      radius: sphereRadius,
+      normal: [0, 0, 1],
+      meta: { role: "sephirah" },
+    });
+  }
 }
 
 function pushTreePaths(data, paths) {
@@ -214,7 +284,7 @@ function pushTreePaths(data, paths) {
   });
 }
 
-function assertTree(data, graph) {
+function assertTree(data, graph, { allowDepth = false } = {}) {
   const seph = data.points.filter((p) => p.meta?.role === "sephirah");
   if (seph.length !== 10) throw new Error(`Tree must have 10 Sephirot (got ${seph.length})`);
   const paths = data.edges.filter((e) => e.meta?.kind === "treePath");
@@ -224,6 +294,12 @@ function assertTree(data, graph) {
   const cz = seph.reduce((s, p) => s + p.z, 0) / 10;
   if (Math.hypot(cx, cy, cz) > 1e-5) {
     throw new Error("Tree of Life geometric center is not at the world origin");
+  }
+  if (!allowDepth) {
+    const maxAbsZ = Math.max(...seph.map((p) => Math.abs(p.z)));
+    if (maxAbsZ > 1e-9) {
+      throw new Error("Planar Tree of Life Sephirot must remain coplanar (z=0)");
+    }
   }
   if (treeConnectivityFingerprint(graph) !== data.meta.connectivity) {
     throw new Error("Tree connectivity fingerprint mismatch");

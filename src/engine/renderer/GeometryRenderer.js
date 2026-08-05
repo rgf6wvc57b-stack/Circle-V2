@@ -237,6 +237,37 @@ export class GeometryRenderer {
     this.drawProgress.clear();
   }
 
+  /**
+   * Reveal progress for a construction endpoint (0..1). Missing entries mean fully revealed.
+   * @param {string} pointId
+   * @param {import('../schema.js').ConstructionData['sphereCenters']} [sphereCenters]
+   */
+  getConstructionRevealProgress(pointId, sphereCenters = this.data?.sphereCenters ?? []) {
+    const spec = sphereCenters.find((s) => s.pointId === pointId);
+    const keys = spec ? [spec.id, `circle-${pointId}`, pointId] : [pointId];
+    for (const key of keys) {
+      if (this.drawProgress.has(key)) {
+        const value = this.drawProgress.get(key);
+        return value == null ? 1 : Math.min(1, Math.max(0, value));
+      }
+    }
+    return 1;
+  }
+
+  /**
+   * Whether a connection path may render during construction playback.
+   * Both endpoint spheres must be fully revealed (not hidden or mid-draw).
+   * @param {{ from: string, to: string }} edge
+   * @param {import('../schema.js').ConstructionData['sphereCenters']} [sphereCenters]
+   */
+  isConstructionEdgeRevealed(edge, sphereCenters = this.data?.sphereCenters ?? []) {
+    const epsilon = 1e-6;
+    const fromReady =
+      this.getConstructionRevealProgress(edge.from, sphereCenters) >= 1 - epsilon;
+    const toReady = this.getConstructionRevealProgress(edge.to, sphereCenters) >= 1 - epsilon;
+    return fromReady && toReady;
+  }
+
   setActiveId(id) {
     this.activeId = id;
   }
@@ -659,9 +690,12 @@ export class GeometryRenderer {
       }
     });
 
-    // Connection paths (Tree of Life, Merkaba, …) stay visible in construction mode
+    // Connection paths (Tree of Life, Merkaba, …) respect sphere reveal progress in construction mode
     if (this.data.edges?.length) {
-      this.#renderLines(points);
+      this.#renderLines(points, {
+        constructionRevealFilter: (edge) =>
+          this.isConstructionEdgeRevealed(edge, this.data.sphereCenters),
+      });
     }
   }
 
@@ -782,6 +816,7 @@ export class GeometryRenderer {
    *   treePathsOnly?: boolean,
    *   includeTreePaths?: boolean,
    *   includeSymmetryAxes?: boolean,
+   *   constructionRevealFilter?: (edge: object) => boolean,
    * }} [opts]
    */
   #renderLines(points, opts = {}) {
@@ -800,6 +835,7 @@ export class GeometryRenderer {
       const a = points.get(edge.from);
       const b = points.get(edge.to);
       if (!a || !b) return;
+      if (opts.constructionRevealFilter && !opts.constructionRevealFilter(edge)) return;
       const kind = edge.meta?.kind;
 
       if (kind === "symmetryAxis") {

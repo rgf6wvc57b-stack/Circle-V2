@@ -12,6 +12,8 @@ import {
   FIT_DISTANCE_SCALE,
   MIN_FRAMING_SIZE,
   MIN_CAMERA_DISTANCE,
+  VOLUMETRIC_FIT_MARGIN,
+  VOLUMETRIC_FIT_DISTANCE_SCALE,
 } from "../src/exploration/framingDefaults.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -87,6 +89,26 @@ function makeController(aspect = 1) {
   assert(
     tiny < 0.2,
     `tiny geometry stays small via MIN_FRAMING_SIZE (frac=${(tiny * 100).toFixed(1)}%)`
+  );
+}
+
+// --- Volumetric 3D Tree targets ~70–80% fill ---
+{
+  const treeExtent = 5.2;
+  const frac =
+    treeExtent /
+    (treeExtent * (1 + VOLUMETRIC_FIT_MARGIN * 2) * VOLUMETRIC_FIT_DISTANCE_SCALE);
+  assert(
+    frac >= 0.75 && frac <= 0.88,
+    `volumetric tree height fraction targets ~70–80% (got ${(frac * 100).toFixed(1)}%)`
+  );
+  assert(
+    VOLUMETRIC_FIT_MARGIN < DEFAULT_FIT_MARGIN,
+    "volumetric margin is tighter than calm default"
+  );
+  assert(
+    VOLUMETRIC_FIT_DISTANCE_SCALE <= FIT_DISTANCE_SCALE,
+    "volumetric distance scale is not looser than default"
   );
 }
 

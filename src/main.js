@@ -10,6 +10,10 @@ import {
   MOBILE_TUTORIAL_FIT_MARGIN,
   MOBILE_TUTORIAL_MIN_DISTANCE,
   FRONT_FRAME_DIRECTION,
+  VOLUMETRIC_FIT_MARGIN,
+  VOLUMETRIC_FIT_DISTANCE_SCALE,
+  VOLUMETRIC_MIN_FRAMING_SIZE,
+  VOLUMETRIC_MIN_CAMERA_DISTANCE,
 } from "./exploration/framingDefaults.js";
 import { FocusSystem } from "./exploration/FocusSystem.js";
 import { MeasurementMode } from "./exploration/MeasurementMode.js";
@@ -34,6 +38,8 @@ import {
   RENDER_LAYERS,
   RENDER_LAYER_DRAW_ORDER,
   coerceToUiRenderMode,
+  ensureTreeRenderLayersForViewMode,
+  ensureVolumetricTreeRenderLayers,
   isRenderLayerId,
   isUiRenderMode,
   layersEqual,
@@ -41,6 +47,9 @@ import {
   legacyModeFromLayers,
   normalizeRenderLayers,
   summarizeRenderLayers,
+  TREE_DEFAULT_WITHOUT_CIRCLE_LAYERS,
+  VOLUMETRIC_TREE_DEFAULT_LAYERS,
+  VOLUMETRIC_TREE_VISIBLE_LAYERS,
 } from "./engine/renderer/uiRenderModes.js";
 import {
   COLOR_MODE,
@@ -85,6 +94,20 @@ import {
   clearStudyPosterInsets,
   computeStudyViewLayout,
 } from "./studies/studyLayout.js";
+import {
+  buildVolumetricTreeLayout,
+  countVolumetricConstructionSteps,
+  normalizeVolumetricOpts,
+} from "./engine/treeOfLife/volumetricLayout.js";
+import {
+  clampConstructionStep,
+  formatConstructionStepLabel,
+  isInvalidConstructionStep,
+  isLegacyFullConstructionStep,
+  resolveConstructionStep,
+  resolveStartupConstructionStep,
+  countVisibleSpheresAtStep,
+} from "./app/constructionStep.js";
 const canvas = document.getElementById("viewport");
 const appRoot = document.getElementById("app");
 
@@ -93,11 +116,13 @@ let guidedTutorial = null;
 
 const TREE_VIEW_HINTS = {
   traditional:
-    "Traditional: complete Kabbalistic diagram — 10 Sephirot and 22 paths in one plane.",
+    "Planar Diagram: flat Kircher layout at z=0 with circle overlays and thin path tubes.",
   spatial:
-    "Spatial: the same Tree coordinates as Traditional, drawn as 3D spheres and path tubes.",
+    "Pillar Depth: Sephirot on three Z planes (Severity −Z, Middle 0, Mercy +Z) — shallow 3D spheres and paths.",
   geometric:
-    "Geometric: the same 10+22 Tree graph, plus construction circles, intersections, and optional FoL overlay.",
+    "Scaffold Depth: layered Sephirot Z plus construction circles, intersections, and symmetry axes in 3D space.",
+  volumetric:
+    "Volumetric 3D Tree: full multi-layer depth growth with explicit x, y, z coordinates and layer-by-layer construction.",
 };
 
 const RENDERING_PRESETS = {
@@ -129,6 +154,12 @@ const ui = {
    */
   renderMode: legacyModeFromLayers(DEFAULT_ACTIVE_RENDER_LAYERS),
   treeViewMode: "traditional",
+  volumetricZSpacing: 0.42,
+  volumetricBranchSpread: 1.0,
+  volumetricLayers: 5,
+  volumetricSphereRadiusRatio: 0.14,
+  volumetricConnectionThickness: 1.2,
+  volumetricShowAxis: true,
   geometricFlags: {
     showTree: true,
     showConstructionGeometry: true,
@@ -139,6 +170,10 @@ const ui = {
   radius: 1.2,
   pathThickness: 1,
   constructionStep: 1,
+  /** @type {boolean} Saved state omitted constructionStep (legacy pre-step field). */
+  constructionStepAbsent: false,
+  /** @type {boolean} Legacy saved state used MAX_SAFE_INTEGER for full geometry. */
+  pendingLegacyFullConstructionStep: false,
   constructionMode: false,
   evolutionMode: false,
   /** Endless geometry: max lattice ring depth (R). */
@@ -421,6 +456,30 @@ function syncSphereColorUI() {
   }
 }
 
+function upgradeLegacyConstructionStepInStorage(maxStep) {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const state = JSON.parse(raw);
+    if (!isLegacyFullConstructionStep(state.constructionStep)) return;
+    state.constructionStep = resolveConstructionStep(state.constructionStep, maxStep);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (error) {
+    console.warn("Failed to upgrade legacy construction step", error);
+  }
+}
+
+function peekLegacyFullConstructionStepInStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+    const state = JSON.parse(raw);
+    return isLegacyFullConstructionStep(state.constructionStep);
+  } catch {
+    return false;
+  }
+}
+
 function saveState() {
   try {
     const state = {
@@ -429,7 +488,7 @@ function saveState() {
       renderMode: ui.renderMode,
       radius: ui.radius,
       pathThickness: ui.pathThickness,
-      constructionStep: ui.constructionStep,
+      constructionStep: clampConstructionStep(ui.constructionStep, getMaxConstructionStep()),
       constructionMode: ui.constructionMode,
       endlessRings: ui.endlessRings,
       endlessExpansionStep: ui.endlessExpansionStep,
@@ -451,6 +510,12 @@ function saveState() {
       renderLayerStyles: ui.renderLayerStyles,
       panelOpen: ui.panelOpen,
       treeViewMode: ui.treeViewMode,
+      volumetricZSpacing: ui.volumetricZSpacing,
+      volumetricBranchSpread: ui.volumetricBranchSpread,
+      volumetricLayers: ui.volumetricLayers,
+      volumetricSphereRadiusRatio: ui.volumetricSphereRadiusRatio,
+      volumetricConnectionThickness: ui.volumetricConnectionThickness,
+      volumetricShowAxis: ui.volumetricShowAxis,
       geometricFlags: ui.geometricFlags,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -525,6 +590,23 @@ function loadState() {
     }
 
     Object.assign(ui, state);
+    const hasExplicitConstructionStep = Object.prototype.hasOwnProperty.call(
+      state,
+      "constructionStep"
+    );
+    ui.constructionStepAbsent = !hasExplicitConstructionStep;
+    const savedStep = hasExplicitConstructionStep ? state.constructionStep : undefined;
+    ui.pendingLegacyFullConstructionStep = isLegacyFullConstructionStep(savedStep);
+    if (ui.pendingLegacyFullConstructionStep) {
+      ui.constructionStep = Number.MAX_SAFE_INTEGER;
+    } else if (hasExplicitConstructionStep) {
+      if (isInvalidConstructionStep(savedStep)) {
+        ui.constructionStep = 1;
+      } else {
+        ui.constructionStep = savedStep;
+      }
+    }
+    normalizeVolumetricUiState();
     return true;
   } catch (error) {
     console.warn("Failed to load state. Defaults will be used.", error);
@@ -815,6 +897,12 @@ const explorationRoot = new THREE.Group();
 explorationRoot.name = "explorationRoot";
 scene.add(explorationRoot);
 
+const axisHelper = new THREE.AxesHelper(1.8);
+axisHelper.name = "volumetricAxisHelper";
+axisHelper.visible = false;
+axisHelper.renderOrder = 20;
+explorationRoot.add(axisHelper);
+
 const engine = new ConstructionEngine(designGroup);
 
 const studyController = new StudyController({
@@ -841,6 +929,7 @@ function syncStudyVisibility() {
     floor.visible = !hideWorld;
     worldGrid.visible = !hideWorld;
   }
+  syncVolumetricAxisHelper();
 }
 const player = engine.player;
 
@@ -930,7 +1019,11 @@ function syncEvolutionUI() {
   const playback = document.getElementById("evolutionPlayback");
   const state = evolution.getState();
   if (playback) playback.hidden = !ui.evolutionMode;
-  if (!ui.evolutionMode) return;
+  if (!ui.evolutionMode) {
+    syncVolumetricAxisHelper();
+    return;
+  }
+  syncVolumetricAxisHelper();
   document.getElementById("evoStepCurrent").textContent = String(state.stepIndex);
   document.getElementById("evoStepTotal").textContent = String(Math.max(0, state.totalSteps - 1));
   document.getElementById("evoTitle").textContent = state.title;
@@ -938,6 +1031,85 @@ function syncEvolutionUI() {
   const slider = document.getElementById("evoSlider");
   slider.max = String(state.totalSteps - 1);
   slider.value = String(state.stepIndex);
+}
+
+function usesVolumetricTreeFraming() {
+  return ui.geometry === "treeOfLife" && ui.treeViewMode === "volumetric";
+}
+
+function isVolumetricTreeAtFullGeometry() {
+  if (!usesVolumetricTreeFraming()) return false;
+  const max = getMaxConstructionStep();
+  if (ui.constructionMode) {
+    const state = player.getState();
+    return state.step >= state.totalSteps || state.step >= max;
+  }
+  return ui.constructionStep >= max;
+}
+
+function framingOptionsForActiveConstruction({ expandOnly = false } = {}) {
+  const phoneTutorial =
+    document.body.classList.contains("mobile-tutorial") && isMobileTutorialLayout();
+  if (phoneTutorial) {
+    return {
+      margin: MOBILE_TUTORIAL_FIT_MARGIN,
+      minDistance: MOBILE_TUTORIAL_MIN_DISTANCE,
+      fitAvailableHeight: true,
+      expandOnly,
+      minFramingSize: undefined,
+      useBoundingSphere: false,
+      distanceScale: undefined,
+      direction: new THREE.Vector3(
+        FRONT_FRAME_DIRECTION.x,
+        FRONT_FRAME_DIRECTION.y,
+        FRONT_FRAME_DIRECTION.z
+      ),
+    };
+  }
+  if (usesVolumetricTreeFraming()) {
+    const atFull = isVolumetricTreeAtFullGeometry();
+    return {
+      margin: VOLUMETRIC_FIT_MARGIN,
+      minDistance: VOLUMETRIC_MIN_CAMERA_DISTANCE,
+      fitAvailableHeight: false,
+      expandOnly: expandOnly && !atFull,
+      minFramingSize: VOLUMETRIC_MIN_FRAMING_SIZE,
+      useBoundingSphere: true,
+      distanceScale: VOLUMETRIC_FIT_DISTANCE_SCALE,
+      direction: null,
+    };
+  }
+  return {
+    margin: DEFAULT_FIT_MARGIN,
+    minDistance: undefined,
+    fitAvailableHeight: false,
+    expandOnly,
+    minFramingSize: undefined,
+    useBoundingSphere: false,
+    distanceScale: undefined,
+    direction: null,
+  };
+}
+
+function expandConstructionDataBounds(box, data) {
+  if (!data) return;
+  const pointById = new Map(data.points.map((p) => [p.id, p]));
+  for (const p of data.points) {
+    box.expandByPoint(new THREE.Vector3(p.x, p.y, p.z));
+  }
+  for (const s of data.sphereCenters ?? []) {
+    const p = pointById.get(s.pointId);
+    if (!p) continue;
+    const r = Number(s.radius) || 0;
+    box.expandByPoint(new THREE.Vector3(p.x + r, p.y + r, p.z + r));
+    box.expandByPoint(new THREE.Vector3(p.x - r, p.y - r, p.z - r));
+  }
+  for (const e of data.edges ?? []) {
+    const a = pointById.get(e.from);
+    const b = pointById.get(e.to);
+    if (a) box.expandByPoint(new THREE.Vector3(a.x, a.y, a.z));
+    if (b) box.expandByPoint(new THREE.Vector3(b.x, b.y, b.z));
+  }
 }
 
 function computeDesignBox() {
@@ -948,6 +1120,16 @@ function computeDesignBox() {
     new THREE.Vector3(-extent, -extent, -extent * 0.35),
     new THREE.Vector3(extent, extent, extent * 0.35)
   );
+
+  if (usesVolumetricTreeFraming() && data) {
+    const measured = new THREE.Box3();
+    expandConstructionDataBounds(measured, data);
+    if (designGroup.children.length) {
+      const meshBox = new THREE.Box3().setFromObject(designGroup);
+      if (!meshBox.isEmpty()) measured.union(meshBox);
+    }
+    if (!measured.isEmpty()) return measured;
+  }
 
   if (designGroup.children.length) {
     const measured = new THREE.Box3().setFromObject(designGroup);
@@ -1055,28 +1237,19 @@ function frameActiveConstruction({
   const box = computeDesignBox();
   focusSystem.clear({ restoreCamera: false });
 
-  const phoneTutorial =
-    document.body.classList.contains("mobile-tutorial") && isMobileTutorialLayout();
-  const fitMargin =
-    margin ?? (phoneTutorial ? MOBILE_TUTORIAL_FIT_MARGIN : DEFAULT_FIT_MARGIN);
-  const fitDirection =
-    direction ??
-    (phoneTutorial
-      ? new THREE.Vector3(
-          FRONT_FRAME_DIRECTION.x,
-          FRONT_FRAME_DIRECTION.y,
-          FRONT_FRAME_DIRECTION.z
-        )
-      : null);
+  const policy = framingOptionsForActiveConstruction({ expandOnly });
 
   cameraController.frameBox(box, {
-    margin: fitMargin,
+    margin: margin ?? policy.margin,
     duration,
     animate,
-    expandOnly,
-    direction: fitDirection,
-    minDistance: phoneTutorial ? MOBILE_TUTORIAL_MIN_DISTANCE : undefined,
-    fitAvailableHeight: phoneTutorial,
+    expandOnly: policy.expandOnly,
+    direction: direction ?? policy.direction,
+    minDistance: policy.minDistance,
+    fitAvailableHeight: policy.fitAvailableHeight,
+    minFramingSize: policy.minFramingSize,
+    useBoundingSphere: policy.useBoundingSphere,
+    distanceScale: policy.distanceScale,
   });
   publishFramingDebug();
 }
@@ -1106,6 +1279,72 @@ function publishFramingDebug() {
     canvas.dataset.usableHeight = String(measure.usableHeight);
     canvas.dataset.sphereScreenHeight = String(measure.sphereHeight);
   }
+}
+
+function measureGeometryScreenFraming() {
+  const rect = syncViewLayout();
+  const cam = cameraController.getActiveCamera();
+  cam.updateMatrixWorld(true);
+  const fullW = rect.fullWidth ?? window.innerWidth;
+  const fullH = rect.fullHeight ?? window.innerHeight;
+  const box = computeDesignBox();
+  if (!box || box.isEmpty()) return null;
+
+  const corners = [
+    new THREE.Vector3(box.min.x, box.min.y, box.min.z),
+    new THREE.Vector3(box.min.x, box.min.y, box.max.z),
+    new THREE.Vector3(box.min.x, box.max.y, box.min.z),
+    new THREE.Vector3(box.min.x, box.max.y, box.max.z),
+    new THREE.Vector3(box.max.x, box.min.y, box.min.z),
+    new THREE.Vector3(box.max.x, box.min.y, box.max.z),
+    new THREE.Vector3(box.max.x, box.max.y, box.min.z),
+    new THREE.Vector3(box.max.x, box.max.y, box.max.z),
+  ];
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const corner of corners) {
+    const ndc = corner.clone().project(cam);
+    const x = (ndc.x * 0.5 + 0.5) * fullW;
+    const y = (-ndc.y * 0.5 + 0.5) * fullH;
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+
+  const geomWidth = Math.max(0, maxX - minX);
+  const geomHeight = Math.max(0, maxY - minY);
+  const geomSpan = Math.max(geomWidth, geomHeight);
+  const usableSpan = Math.min(rect.width, rect.height);
+  const center = box.getCenter(new THREE.Vector3());
+  const centerNdc = center.clone().project(cam);
+  const centerX = (centerNdc.x * 0.5 + 0.5) * fullW;
+  const centerY = (-centerNdc.y * 0.5 + 0.5) * fullH;
+  const availCx = rect.x + rect.width / 2;
+  const availCy = rect.y + rect.height / 2;
+  const target = cameraController.getOrbitTarget();
+
+  return {
+    geomWidth,
+    geomHeight,
+    geomSpan,
+    usableWidth: rect.width,
+    usableHeight: rect.height,
+    usableSpan,
+    spanFraction: usableSpan > 0 ? geomSpan / usableSpan : 0,
+    centerOffsetX: centerX - availCx,
+    centerOffsetY: centerY - availCy,
+    orbitTarget: [target.x, target.y, target.z],
+    geometricCenter: [center.x, center.y, center.z],
+    fullyVisible:
+      minX >= rect.x - 2 &&
+      minY >= rect.y - 2 &&
+      maxX <= rect.x + rect.width + 2 &&
+      maxY <= rect.y + rect.height + 2,
+  };
 }
 
 function measureSphereScreenSpace() {
@@ -1267,16 +1506,38 @@ function syncDisplayOverlays() {
   syncDiscovery();
 }
 
+function getMaxConstructionStep() {
+  return Math.max(0, engine.getMaxStep());
+}
+
+function resetConstructionStep({ toMax = false } = {}) {
+  const max = getMaxConstructionStep();
+  ui.constructionStep = clampConstructionStep(toMax ? max : 1, max);
+  const layers = document.getElementById("layers");
+  if (layers) {
+    layers.min = "0";
+    layers.max = String(Math.max(0, max));
+    layers.value = String(ui.constructionStep);
+  }
+  if (!ui.constructionMode) {
+    showStaticStep(ui.constructionStep, { reframe: false });
+  } else {
+    syncStepDisplay();
+    syncLabels();
+  }
+}
+
 function syncDiscovery() {
   const data = engine.getVisibleData() ?? engine.getFullData();
-  let step = ui.constructionStep;
-  let maxStep = engine.getMaxStep();
+  let maxStep = getMaxConstructionStep();
+  let step = clampConstructionStep(ui.constructionStep, maxStep);
   if (ui.evolutionMode) {
     const st = evolution.getState();
     step = st.stepIndex;
     maxStep = Math.max(0, st.totalSteps - 1);
   } else if (ui.constructionMode) {
-    step = player.getState().displayStep || player.getState().step || 1;
+    const playerState = player.getState();
+    step = clampConstructionStep(playerState.displayStep ?? playerState.step ?? 0, maxStep);
   }
   discoveryEngine.setContext({ step, maxStep });
   discoveryEngine.setData(data);
@@ -1285,7 +1546,10 @@ function syncDiscovery() {
 function syncLabels() {
   document.getElementById("radiusValue").textContent = ui.radius.toFixed(2);
   document.getElementById("pathThicknessValue").textContent = ui.pathThickness.toFixed(2);
-  document.getElementById("layersValue").textContent = String(ui.constructionStep);
+  const max = getMaxConstructionStep();
+  const stepLabel = formatConstructionStepLabel(ui.constructionStep, max);
+  const layersValue = document.getElementById("layersValue");
+  if (layersValue) layersValue.textContent = stepLabel;
   document.getElementById("animSpeedValue").textContent = ui.animSpeed.toFixed(2);
   document.getElementById("colorIntensityValue").textContent = ui.colorIntensity.toFixed(2);
   document.getElementById("blendStrengthValue").textContent = ui.blendStrength.toFixed(2);
@@ -1316,26 +1580,36 @@ function syncLabels() {
 
 function syncStepDisplay() {
   const state = player.getState();
-  const total = state.totalSteps || engine.getMaxStep();
+  const engineMax = getMaxConstructionStep();
+  const total = ui.constructionMode
+    ? Math.max(0, state.totalSteps || engineMax)
+    : engineMax;
+  const playerStep = state.displayStep ?? state.step ?? 0;
   const current = ui.constructionMode
-    ? Math.max(1, state.displayStep || state.step || 1)
-    : ui.constructionStep;
+    ? clampConstructionStep(playerStep, total)
+    : clampConstructionStep(ui.constructionStep, total);
   document.getElementById("stepCurrent").textContent = String(current);
   document.getElementById("stepTotal").textContent = String(total);
 
   const slider = document.getElementById("layers");
-  slider.max = String(total);
+  slider.min = "0";
+  slider.max = String(Math.max(0, total));
+  slider.value = String(current);
   if (!ui.constructionMode) {
-    document.getElementById("layersValue").textContent = String(ui.constructionStep);
+    const layersValue = document.getElementById("layersValue");
+    if (layersValue) layersValue.textContent = formatConstructionStepLabel(current, total);
   }
 
   const constructionSlider = document.getElementById("constructionStepSlider");
   const constructionSliderValue = document.getElementById("constructionStepSliderValue");
   if (constructionSlider) {
-    constructionSlider.max = String(Math.max(1, total));
+    constructionSlider.min = "0";
+    constructionSlider.max = String(Math.max(0, total));
     if (ui.constructionMode) {
       constructionSlider.value = String(current);
-      if (constructionSliderValue) constructionSliderValue.textContent = String(current);
+      if (constructionSliderValue) {
+        constructionSliderValue.textContent = formatConstructionStepLabel(current, total);
+      }
     }
   }
 }
@@ -1343,6 +1617,8 @@ function syncStepDisplay() {
 function syncConstructionUI() {
   const playback = document.getElementById("constructionPlayback");
   const legacy = document.getElementById("legacyStepGroup");
+  const constructionModeCb = document.getElementById("constructionMode");
+  if (constructionModeCb) constructionModeCb.checked = ui.constructionMode;
   if (playback) playback.hidden = !ui.constructionMode || ui.evolutionMode;
   if (legacy) legacy.hidden = ui.constructionMode || ui.evolutionMode;
   syncStepDisplay();
@@ -1355,7 +1631,9 @@ function applyAppearance() {
 function showStaticStep(step, { reframe = true } = {}) {
   player.pause();
   engine.setConstructionMode(false);
-  engine.setStep(step);
+  const max = getMaxConstructionStep();
+  ui.constructionStep = clampConstructionStep(step, max);
+  engine.setStep(ui.constructionStep);
   applyAppearance();
   const visible = engine.getVisibleData();
   engine.clearDrawProgress();
@@ -1364,6 +1642,8 @@ function showStaticStep(step, { reframe = true } = {}) {
   visible?.points.forEach((p) => engine.setDrawProgress(p.id, 1));
   engine.setActiveId(null);
   engine.redraw();
+  syncLabels();
+  syncStepDisplay();
   syncDisplayOverlays();
   if (reframe) frameActiveConstruction({ expandOnly: true });
 }
@@ -1375,6 +1655,10 @@ function enterConstructionMode() {
   player.setAnimSpeed(ui.animSpeed);
   player.setAutoPlay(ui.autoPlay);
   player.restart({ autoStart: ui.autoPlay });
+  if (!ui.autoPlay) {
+    const step = clampConstructionStep(ui.constructionStep, getMaxConstructionStep());
+    player.goToSphereCount(step);
+  }
   syncConstructionUI();
   syncDisplayOverlays();
 }
@@ -1385,11 +1669,27 @@ function exitConstructionMode() {
   document.getElementById("autoPlay").checked = false;
   ui.autoPlay = false;
   engine.setConstructionMode(false);
-  ui.constructionStep = Number.MAX_SAFE_INTEGER;
+  const max = getMaxConstructionStep();
+  ui.constructionStep = clampConstructionStep(max, max);
   showStaticStep(ui.constructionStep, { reframe: false });
   syncConstructionUI();
   syncWorldDecor();
   syncLabels();
+}
+
+function normalizeVolumetricUiState() {
+  const norm = normalizeVolumetricOpts({
+    zSpacing: ui.volumetricZSpacing,
+    branchSpread: ui.volumetricBranchSpread,
+    layers: ui.volumetricLayers,
+    sphereRadiusRatio: ui.volumetricSphereRadiusRatio,
+    connectionThickness: ui.volumetricConnectionThickness,
+  });
+  ui.volumetricZSpacing = norm.zSpacing;
+  ui.volumetricBranchSpread = norm.branchSpread;
+  ui.volumetricLayers = norm.layers;
+  ui.volumetricSphereRadiusRatio = norm.sphereRadiusRatio;
+  ui.volumetricConnectionThickness = norm.connectionThickness;
 }
 
 function syncTreeViewUI() {
@@ -1402,6 +1702,67 @@ function syncTreeViewUI() {
   if (hint) hint.textContent = TREE_VIEW_HINTS[ui.treeViewMode] || TREE_VIEW_HINTS.traditional;
   const flagsGroup = document.getElementById("geometricFlagsGroup");
   if (flagsGroup) flagsGroup.hidden = true;
+  syncVolumetricUI();
+}
+
+function isVolumetricAxisHelperActive() {
+  return (
+    ui.geometry === "treeOfLife" &&
+    ui.treeViewMode === "volumetric" &&
+    ui.volumetricShowAxis &&
+    !studyController.isActive() &&
+    !ui.evolutionMode
+  );
+}
+
+function syncVolumetricAxisHelper() {
+  axisHelper.visible = isVolumetricAxisHelperActive();
+}
+
+function syncVolumetricUI() {
+  normalizeVolumetricUiState();
+  const group = document.getElementById("volumetricControls");
+  const isVolumetric = ui.geometry === "treeOfLife" && ui.treeViewMode === "volumetric";
+  if (group) group.hidden = !isVolumetric;
+  syncVolumetricAxisHelper();
+
+  const zEl = document.getElementById("volumetricZSpacing");
+  const zVal = document.getElementById("volumetricZSpacingValue");
+  const spreadEl = document.getElementById("volumetricBranchSpread");
+  const spreadVal = document.getElementById("volumetricBranchSpreadValue");
+  const layersEl = document.getElementById("volumetricLayers");
+  const layersVal = document.getElementById("volumetricLayersValue");
+  const sphereEl = document.getElementById("volumetricSphereRadius");
+  const sphereVal = document.getElementById("volumetricSphereRadiusValue");
+  const thickEl = document.getElementById("volumetricConnectionThickness");
+  const thickVal = document.getElementById("volumetricConnectionThicknessValue");
+  const axisEl = document.getElementById("volumetricShowAxis");
+  const hint = document.getElementById("volumetricHint");
+
+  if (zEl) zEl.value = String(ui.volumetricZSpacing);
+  if (zVal) zVal.textContent = ui.volumetricZSpacing.toFixed(2);
+  if (spreadEl) spreadEl.value = String(ui.volumetricBranchSpread);
+  if (spreadVal) spreadVal.textContent = ui.volumetricBranchSpread.toFixed(2);
+  if (layersEl) layersEl.value = String(ui.volumetricLayers);
+  if (layersVal) layersVal.textContent = String(ui.volumetricLayers);
+  if (sphereEl) sphereEl.value = String(ui.volumetricSphereRadiusRatio);
+  if (sphereVal) sphereVal.textContent = ui.volumetricSphereRadiusRatio.toFixed(2);
+  if (thickEl) thickEl.value = String(ui.volumetricConnectionThickness);
+  if (thickVal) thickVal.textContent = ui.volumetricConnectionThickness.toFixed(2);
+  if (axisEl) axisEl.checked = ui.volumetricShowAxis;
+  if (hint && isVolumetric) {
+    const steps = countVolumetricConstructionSteps(
+      buildVolumetricTreeLayout(ui.radius, {
+        zSpacing: ui.volumetricZSpacing,
+        branchSpread: ui.volumetricBranchSpread,
+        layers: ui.volumetricLayers,
+        sphereRadiusRatio: ui.volumetricSphereRadiusRatio,
+        connectionThickness: ui.volumetricConnectionThickness,
+      }).layerGroups
+    );
+    hint.textContent =
+      `Construction reveals one Z-depth layer per step (${steps} steps). All Sephirot in a layer appear together; the Construction Step slider and playback use the same layer total.`;
+  }
 }
 
 function endlessGeometryOpts() {
@@ -1493,13 +1854,33 @@ function syncEndlessUI() {
   }
 }
 
-function preferredRenderLayersForTree(_viewMode) {
+function preferredRenderLayersForTree(viewMode) {
+  if (viewMode === "volumetric" || viewMode === "spatial") {
+    return [...TREE_DEFAULT_WITHOUT_CIRCLE_LAYERS];
+  }
   return [
     RENDER_LAYERS.spheres,
     RENDER_LAYERS.circles,
     RENDER_LAYERS.points,
     RENDER_LAYERS.connections,
   ];
+}
+
+function treeViewModeNeedsLayerCompatibility(viewMode) {
+  return viewMode === "volumetric" || viewMode === "spatial";
+}
+
+function applyTreeViewModeRenderLayers(viewMode) {
+  if (treeViewModeNeedsLayerCompatibility(viewMode)) {
+    const source = ui.userPickedRenderer
+      ? ui.activeRenderLayers
+      : preferredRenderLayersForTree(viewMode);
+    ui.activeRenderLayers = new Set(ensureTreeRenderLayersForViewMode(viewMode, source));
+  } else if (!ui.userPickedRenderer) {
+    ui.activeRenderLayers = new Set(preferredRenderLayersForTree(viewMode));
+  }
+  syncDerivedRenderMode();
+  syncRendererLayerUI();
 }
 
 function preferredRenderModeForTree(_viewMode) {
@@ -1514,6 +1895,13 @@ function treeGeometryOpts() {
   return {
     viewMode: ui.treeViewMode,
     geometricFlags: { ...ui.geometricFlags },
+    volumetric: {
+      zSpacing: ui.volumetricZSpacing,
+      branchSpread: ui.volumetricBranchSpread,
+      layers: ui.volumetricLayers,
+      sphereRadiusRatio: ui.volumetricSphereRadiusRatio,
+      connectionThickness: ui.volumetricConnectionThickness,
+    },
   };
 }
 function rebuildFromGenerator() {
@@ -1550,13 +1938,12 @@ function rebuildFromGenerator() {
   syncTreeViewUI();
   syncEndlessUI();
 
-  const max = engine.getMaxStep();
+  const max = getMaxConstructionStep();
   document.getElementById("layers").max = String(max);
-  if (ui.geometry === "endless") {
-    ui.constructionStep = max;
-  } else if (ui.constructionStep > max) {
-    ui.constructionStep = max;
-  }
+  ui.constructionStep = clampConstructionStep(
+    ui.geometry === "endless" ? max : ui.constructionStep,
+    max
+  );
   document.getElementById("layers").value = String(ui.constructionStep);
 
   if (ui.constructionMode) {
@@ -1639,8 +2026,7 @@ player.onChange = () => {
 function bindControls() {
   document.getElementById("geometry").addEventListener("change", (e) => {
     ui.geometry = e.target.value;
-    ui.constructionStep = 1;
-    document.getElementById("layers").value = "1";
+    resetConstructionStep({ toMax: false });
     if (ui.geometry !== "endless") stopEndlessAutoExpand();
     if (ui.geometry === "endless") {
       ui.endlessExpansionStep = clampEndlessExpansionStep(
@@ -1701,19 +2087,19 @@ function bindControls() {
 
   document.getElementById("treeViewMode").addEventListener("change", (e) => {
     ui.treeViewMode = e.target.value;
-    if (!ui.userPickedRenderer) {
-      ui.activeRenderLayers = new Set(preferredRenderLayersForTree(ui.treeViewMode));
-      syncDerivedRenderMode();
-      syncRendererLayerUI();
-    }
+    resetConstructionStep({ toMax: false });
+    applyTreeViewModeRenderLayers(ui.treeViewMode);
     if (ui.treeViewMode === "traditional") ui.pathThickness = 0.75;
     else if (ui.treeViewMode === "spatial") ui.pathThickness = 1.4;
-    else ui.pathThickness = 1.1;
+    else if (ui.treeViewMode === "volumetric") {
+      ui.pathThickness = ui.volumetricConnectionThickness;
+    } else ui.pathThickness = 1.1;
     patchRenderLayerStyle(ui.renderLayerStyles, "connections", {
       thickness: ui.pathThickness,
     });
     document.getElementById("pathThickness").value = String(ui.pathThickness);
     syncRenderLayerStyleUI();
+    syncVolumetricUI();
     rebuildFromGenerator();
     saveState();
   });
@@ -1732,6 +2118,35 @@ function bindControls() {
   bindGeoFlag("geoShowFlower", "showFlowerOverlay");
   bindGeoFlag("geoShowIntersections", "showIntersections");
   bindGeoFlag("geoShowSymmetry", "showSymmetryAxes");
+
+  const bindVolumetric = (id, key) => {
+    document.getElementById(id)?.addEventListener("input", (e) => {
+      ui[key] = Number(e.target.value);
+      normalizeVolumetricUiState();
+      if (key === "volumetricConnectionThickness") {
+        ui.pathThickness = ui.volumetricConnectionThickness;
+        patchRenderLayerStyle(ui.renderLayerStyles, "connections", { thickness: ui.pathThickness });
+        const pathEl = document.getElementById("pathThickness");
+        if (pathEl) pathEl.value = String(ui.pathThickness);
+        syncRenderLayerStyleUI();
+      }
+      syncVolumetricUI();
+      if (ui.geometry === "treeOfLife" && ui.treeViewMode === "volumetric") {
+        rebuildFromGenerator();
+      }
+      saveState();
+    });
+  };
+  bindVolumetric("volumetricZSpacing", "volumetricZSpacing");
+  bindVolumetric("volumetricBranchSpread", "volumetricBranchSpread");
+  bindVolumetric("volumetricLayers", "volumetricLayers");
+  bindVolumetric("volumetricSphereRadius", "volumetricSphereRadiusRatio");
+  bindVolumetric("volumetricConnectionThickness", "volumetricConnectionThickness");
+  document.getElementById("volumetricShowAxis")?.addEventListener("change", (e) => {
+    ui.volumetricShowAxis = e.target.checked;
+    syncVolumetricAxisHelper();
+    saveState();
+  });
 
   const summaryBtn = document.getElementById("rendererSummary");
   summaryBtn?.addEventListener("click", (e) => {
@@ -1815,7 +2230,7 @@ function bindControls() {
   });
 
   document.getElementById("layers").addEventListener("input", (e) => {
-    ui.constructionStep = Number(e.target.value);
+    ui.constructionStep = clampConstructionStep(Number(e.target.value), getMaxConstructionStep());
     syncLabels();
     if (!ui.constructionMode) showStaticStep(ui.constructionStep);
     saveState();
@@ -2056,7 +2471,16 @@ function bindControls() {
       frameActiveConstruction({ duration: 0.8 });
       return;
     }
-    cameraController.goToPreset(preset, { duration: 0.8, box });
+    const policy = framingOptionsForActiveConstruction({ expandOnly: false });
+    cameraController.goToPreset(preset, {
+      duration: 0.8,
+      box,
+      margin: policy.margin,
+      minDistance: policy.minDistance,
+      minFramingSize: policy.minFramingSize,
+      useBoundingSphere: policy.useBoundingSphere,
+      distanceScale: policy.distanceScale,
+    });
   });
 
   document.getElementById("measurementMode")?.addEventListener("change", (e) => {
@@ -2365,6 +2789,9 @@ function onViewportResize() {
   
   syncViewLayout();
   positionRendererPopover();
+  if (usesVolumetricTreeFraming() && !studyController.isActive()) {
+    frameActiveConstruction({ animate: false, duration: 0 });
+  }
 }
 
 window.addEventListener("resize", onViewportResize, { passive: true });
@@ -2440,7 +2867,7 @@ function animate() {
   }
 }
 // Initialize
-loadState();
+const stateLoaded = loadState();
 
 // Make sure the saved state uses valid Sets and defaults.
 if (!(ui.activeRenderLayers instanceof Set)) {
@@ -2458,7 +2885,6 @@ syncRenderLayerStyleUI();
 syncSphereColorUI();
 syncTreeViewUI();
 syncEndlessUI();
-syncConstructionUI();
 syncEvolutionUI();
 syncLabels();
 
@@ -2482,21 +2908,56 @@ if (ui.geometry === "treeOfLife") {
 }
 
 engine.regenerate();
+if (ui.geometry === "treeOfLife") {
+  const ensured = ensureTreeRenderLayersForViewMode(
+    ui.treeViewMode,
+    ui.activeRenderLayers
+  );
+  if (!layersEqual(ui.activeRenderLayers, ensured)) {
+    ui.activeRenderLayers = new Set(ensured);
+    syncDerivedRenderMode();
+  }
+}
 engine.setActiveRenderLayers(ui.activeRenderLayers);
 applyAppearance();
 
-// Show the complete geometry when Construction Mode is off.
+// Cold startup always displays static geometry. Saved Construction Mode sessions are
+// not resumed automatically — show complete geometry instead of a partial static model.
+const savedWantedConstructionMode = Boolean(stateLoaded && ui.constructionMode);
+ui.constructionMode = false;
+
 const maxStep = engine.getMaxStep();
-ui.constructionStep = maxStep;
+const legacyFullStep =
+  ui.pendingLegacyFullConstructionStep ||
+  isLegacyFullConstructionStep(ui.constructionStep) ||
+  peekLegacyFullConstructionStepInStorage();
+ui.constructionStep = resolveStartupConstructionStep({
+  step: ui.constructionStep,
+  maxStep,
+  stateLoaded,
+  constructionMode: false,
+  legacyFullStep,
+  constructionStepAbsent: ui.constructionStepAbsent,
+});
+if (savedWantedConstructionMode) {
+  ui.constructionStep = maxStep;
+}
+ui.constructionStepAbsent = false;
+ui.pendingLegacyFullConstructionStep = false;
+if (legacyFullStep) {
+  upgradeLegacyConstructionStepInStorage(maxStep);
+  saveState();
+}
 
 const layersSlider = document.getElementById("layers");
 if (layersSlider) {
+  layersSlider.min = "0";
   layersSlider.max = String(maxStep);
-  layersSlider.value = String(maxStep);
+  layersSlider.value = String(ui.constructionStep);
 }
 
 engine.setConstructionMode(false);
-showStaticStep(maxStep, { reframe: false });
+showStaticStep(ui.constructionStep, { reframe: false });
 
 syncConstructionUI();
 syncDisplayOverlays();
@@ -2819,6 +3280,142 @@ window.__studyTestHooks = {
       }
     }
     return { goldSpan: maxSpan, goldPixels, availWidth: rect.width, scanWidth };
+  },
+};
+
+window.__constructionTestHooks = {
+  getUiConstructionStep: () => ui.constructionStep,
+  hadPendingLegacyFullConstructionStep: () => ui.pendingLegacyFullConstructionStep,
+  hadConstructionStepAbsent: () => ui.constructionStepAbsent,
+  isConstructionMode: () => ui.constructionMode,
+  isEngineConstructionMode: () => engine.isConstructionMode(),
+  getConstructionModeCheckbox: () => document.getElementById("constructionMode")?.checked ?? false,
+  getPlayerPhase: () => player.getState().phase,
+  getGeometryId: () => ui.geometry,
+  getFullSphereCount: () => engine.getFullData()?.sphereCenters?.length ?? 0,
+  applyStaticStep: (step) => showStaticStep(step, { reframe: false }),
+  getEngineStep: () => engine.getStep(),
+  getVisibleSphereCount: () => engine.getVisibleData()?.sphereCenters?.length ?? 0,
+  getLayersLabel: () => document.getElementById("layersValue")?.textContent ?? "",
+  getSliderValue: () => document.getElementById("layers")?.value ?? "",
+  getStepCurrent: () => document.getElementById("stepCurrent")?.textContent ?? "",
+  getStepTotal: () => document.getElementById("stepTotal")?.textContent ?? "",
+  getPlayerDisplayStep: () => player.getState().displayStep ?? player.getState().step ?? 0,
+  getDiscoveryStep: () => discoveryEngine.ctx?.step ?? null,
+  getMaxConstructionStep: () => getMaxConstructionStep(),
+  resolveConstructionStep: (step) => resolveConstructionStep(step, getMaxConstructionStep()),
+  countExpectedVisibleSpheres: (step) =>
+    countVisibleSpheresAtStep(engine.getFullData(), step),
+  selectTreeMode: async (mode) => {
+    const geo = document.getElementById("geometry");
+    if (geo.value !== "treeOfLife") {
+      geo.value = "treeOfLife";
+      geo.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    const sel = document.getElementById("treeViewMode");
+    sel.value = mode;
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  },
+};
+
+window.__evolutionTestHooks = {
+  syncDiscovery: () => syncDiscovery(),
+  enableEvolutionMode: () => {
+    const cb = document.getElementById("evolutionMode");
+    cb.checked = true;
+    cb.dispatchEvent(new Event("change", { bubbles: true }));
+  },
+  stepEvolutionForward: () => evolution.stepForward(),
+};
+
+window.__volumetricTestHooks = {
+  getConstructionData: () => engine.getFullData(),
+  getMaxStep: () => engine.getMaxStep(),
+  getPlayerTotalSteps: () => player.getState().totalSteps,
+  getSphereRadiusRatio: () => ui.volumetricSphereRadiusRatio,
+  getGeneratorSphereRadius: () => engine.getFullData()?.sphereCenters?.[0]?.radius ?? null,
+  getConstructionRadius: () => engine.getVisibleData()?.sphereCenters?.[0]?.radius ?? null,
+  isAxisHelperVisible: () => axisHelper.visible,
+  getActiveRenderLayers: () => [...ui.activeRenderLayers].sort(),
+  setRenderLayersOnly: (layers) => {
+    applyActiveRenderLayers(layers, { userPicked: true });
+  },
+  countSceneSphereMeshes: () => {
+    let count = 0;
+    designGroup.traverse((obj) => {
+      if (obj.userData?.kind === "sphere") count += 1;
+    });
+    return count;
+  },
+  countSceneConnectionMeshes: () => {
+    let count = 0;
+    designGroup.traverse((obj) => {
+      if (obj.userData?.kind === "line") count += 1;
+    });
+    return count;
+  },
+  countSceneCircleMeshes: () => {
+    let count = 0;
+    designGroup.traverse((obj) => {
+      if (obj.userData?.kind === "circle") count += 1;
+    });
+    return count;
+  },
+  selectTreeViewMode: (mode) => {
+    const sel = document.getElementById("treeViewMode");
+    if (!sel) return;
+    sel.value = mode;
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  },
+  getCircleCenterCount: () =>
+    (engine.getVisibleData() ?? engine.getFullData())?.circleCenters?.length ?? 0,
+  enableCirclesLayer: () => {
+    ui.activeRenderLayers.add("circles");
+    syncDerivedRenderMode();
+    syncRendererLayerUI();
+    engine.setActiveRenderLayers(ui.activeRenderLayers);
+  },
+  enterConstructionMode: () => {
+    if (ui.constructionMode) return;
+    ui.constructionMode = true;
+    const cb = document.getElementById("constructionMode");
+    if (cb) cb.checked = true;
+    enterConstructionMode();
+  },
+  exitConstructionMode: () => {
+    if (!ui.constructionMode) return;
+    ui.constructionMode = false;
+    const cb = document.getElementById("constructionMode");
+    if (cb) cb.checked = false;
+    exitConstructionMode();
+  },
+  measureProjectedSpan: () => {
+    const data = engine.getFullData();
+    const seph = data?.points?.filter((p) => p.meta?.role === "sephirah") ?? [];
+    if (!seph.length) return null;
+    const camera = cameraController.getActiveCamera();
+    const projected = seph.map((p) => {
+      const v = new THREE.Vector3(p.x, p.y, p.z).project(camera);
+      return { x: (v.x * 0.5 + 0.5) * window.innerWidth, y: (-v.y * 0.5 + 0.5) * window.innerHeight };
+    });
+    const xs = projected.map((p) => p.x);
+    const ys = projected.map((p) => p.y);
+    return {
+      xSpan: Math.max(...xs) - Math.min(...xs),
+      ySpan: Math.max(...ys) - Math.min(...ys),
+      zSpan: Math.max(...seph.map((p) => p.z)) - Math.min(...seph.map((p) => p.z)),
+    };
+  },
+  measureGeometryFraming: () => measureGeometryScreenFraming(),
+  frameActiveConstruction: (opts) => frameActiveConstruction(opts),
+  getOrbitTarget: () => {
+    const t = cameraController.getOrbitTarget();
+    return [t.x, t.y, t.z];
+  },
+  getGeometricCenter: () => {
+    const c = computeDesignBox().getCenter(new THREE.Vector3());
+    return [c.x, c.y, c.z];
   },
 };
 
