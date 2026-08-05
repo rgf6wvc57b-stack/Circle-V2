@@ -254,7 +254,7 @@ export class ConstructionPlayer {
     this.engine.clearDrawProgress();
     this.engine.setActiveId(null);
 
-    const target = Math.max(1, this.completedSpheres - 1);
+    const target = Math.max(0, this.completedSpheres - 1);
     this.#snapToSphereCount(target);
     this.#emit();
   }
@@ -275,10 +275,8 @@ export class ConstructionPlayer {
     this.engine.clearDrawProgress();
     this.engine.setActiveId(null);
     const raw = Number(count);
-    const target = Math.max(
-      0,
-      Math.min(this.plan.sphereCount, Number.isFinite(raw) ? raw : 1)
-    );
+    const rounded = Number.isFinite(raw) ? Math.round(raw) : 0;
+    const target = Math.max(0, Math.min(this.plan.sphereCount, rounded));
     this.#snapToSphereCount(target);
     this.#emit();
   }
@@ -418,6 +416,14 @@ export class ConstructionPlayer {
     this.compassProgress = 0;
     this.phase = "drawing";
     this.engine.clearDrawProgress();
+    const activePointIds = new Set(drawOps.map(({ op }) => op.pointId));
+    const visibleBefore = this.engine.getVisibleData();
+    visibleBefore?.sphereCenters.forEach((s) => {
+      if (activePointIds.has(s.pointId)) return;
+      this.engine.setDrawProgress(s.id, 1);
+      this.engine.setDrawProgress(`circle-${s.pointId}`, 1);
+      this.engine.setDrawProgress(s.pointId, 1);
+    });
     drawOps.forEach(({ op }) => {
       this.engine.setDrawProgress(op.sphereId, 0);
       this.engine.setDrawProgress(`circle-${op.pointId}`, 0);

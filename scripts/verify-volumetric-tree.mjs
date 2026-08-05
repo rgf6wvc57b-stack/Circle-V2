@@ -311,6 +311,23 @@ function drawProgressFor(engine, sphereId) {
   return engine.renderer.drawProgress.get(sphereId);
 }
 
+function findTreePath(data, from, to) {
+  return (data?.edges ?? []).find(
+    (edge) =>
+      edge.meta?.kind === "treePath" &&
+      ((edge.from === from && edge.to === to) || (edge.from === to && edge.to === from))
+  );
+}
+
+function revealedTreePaths(engine) {
+  const data = engine.getVisibleData();
+  return (data?.edges ?? []).filter(
+    (edge) =>
+      edge.meta?.kind === "treePath" &&
+      engine.renderer.isConstructionEdgeRevealed(edge, data.sphereCenters)
+  );
+}
+
 function beginLayerAnimation(engine, completedLayers) {
   const player = engine.player;
   player.playing = false;
@@ -418,6 +435,98 @@ function beginLayerAnimation(engine, completedLayers) {
     String(flowerEngine.player.activeDrawOps.length)
   );
   assert(flowerEngine.player.plan?.stepKind !== "layer", "flower plan is not layer-stepped");
+}
+
+// --- Construction playback: path edges wait for sphere reveal ---
+{
+  const volOpts = { layers: 5, zSpacing: 0.42, branchSpread: 1.0 };
+  const plan = buildTreeOfLifeConstructionPlan(r, { viewMode: "volumetric", volumetric: volOpts });
+  const group = new THREE.Group();
+  const engine = new ConstructionEngine(group);
+  engine.setGeometryOpts({ viewMode: "volumetric", volumetric: volOpts });
+  engine.setGeometry("treeOfLife");
+  engine.setConstructionMode(true);
+
+  const visible = engine.getVisibleData();
+  const yesodMalkuthPath = findTreePath(visible, "yesod", "malkuth");
+  assert(yesodMalkuthPath?.id === "path-22", "yesod–malkuth path is path-22", yesodMalkuthPath?.id ?? "none");
+
+  beginLayerAnimation(engine, 0);
+  const player = engine.player;
+  assert(
+    !engine.renderer.isConstructionEdgeRevealed(yesodMalkuthPath, visible.sphereCenters),
+    "yesod–malkuth path hidden while layer-1 spheres are at draw progress 0"
+  );
+  assert(
+    revealedTreePaths(engine).length === 0,
+    "no tree paths connect to hidden active-layer spheres at animation start",
+    String(revealedTreePaths(engine).length)
+  );
+
+  player.playing = true;
+  player.update(0.72);
+  assert(
+    !engine.renderer.isConstructionEdgeRevealed(yesodMalkuthPath, engine.getVisibleData().sphereCenters),
+    "yesod–malkuth path hidden during partial layer draw"
+  );
+  assert(
+    revealedTreePaths(engine).every(
+      (edge) =>
+        engine.renderer.getConstructionRevealProgress(edge.from, engine.getVisibleData().sphereCenters) >=
+          1 - 1e-6 &&
+        engine.renderer.getConstructionRevealProgress(edge.to, engine.getVisibleData().sphereCenters) >= 1 - 1e-6
+    ),
+    "no path connects to a partially drawn active-layer sphere"
+  );
+
+  player.stepForward();
+  assert(player.phase === "highlight", "layer 1 draw completes before path reveal", player.phase);
+  assert(
+    engine.renderer.isConstructionEdgeRevealed(yesodMalkuthPath, engine.getVisibleData().sphereCenters),
+    "yesod–malkuth path appears after both layer-1 spheres finish drawing"
+  );
+
+  player.stepForward();
+  const afterLayerOne = revealedTreePaths(engine);
+  assert(afterLayerOne.some((edge) => edge.id === "path-22"), "completed layer-1 path stays visible");
+
+  beginLayerAnimation(engine, 1);
+  const netzachYesodPath = findTreePath(engine.getVisibleData(), "netzach", "yesod");
+  assert(
+    engine.renderer.isConstructionEdgeRevealed(yesodMalkuthPath, engine.getVisibleData().sphereCenters),
+    "previously completed yesod–malkuth path stays visible during layer 2"
+  );
+  assert(
+    !engine.renderer.isConstructionEdgeRevealed(netzachYesodPath, engine.getVisibleData().sphereCenters),
+    "cross-layer path to hidden netzach stays hidden during layer 2 draw"
+  );
+
+  player.stepForward();
+  player.stepForward();
+  assert(
+    engine.renderer.isConstructionEdgeRevealed(netzachYesodPath, engine.getVisibleData().sphereCenters),
+    "cross-layer path appears after layer 2 reveal completes"
+  );
+
+  engine.player.goToSphereCount(plan.sphereCount);
+  const finalPaths = revealedTreePaths(engine);
+  assert(finalPaths.length === 22, "final volumetric playback shows all 22 tree paths", String(finalPaths.length));
+
+  player.completedSpheres = 1;
+  player.phase = "idle";
+  player.stepBack();
+  assert(player.completedSpheres === 0, "stepBack moves from layer step 1 to step 0", String(player.completedSpheres));
+
+  player.goToSphereCount(1.7);
+  assert(player.completedSpheres === 2, "goToSphereCount rounds fractional input", String(player.completedSpheres));
+  player.goToSphereCount(99);
+  assert(
+    player.completedSpheres === plan.sphereCount,
+    "goToSphereCount clamps high input to maxStep",
+    String(player.completedSpheres)
+  );
+  player.goToSphereCount(-3);
+  assert(player.completedSpheres === 0, "goToSphereCount clamps negative input to 0", String(player.completedSpheres));
 }
 
 await run("npm", ["run", "build"]);
