@@ -30,13 +30,18 @@ const SEPHIRAH_LAYER_INDEX = Object.freeze({
  * }}
  */
 export function normalizeVolumetricOpts(opts = {}) {
+  const num = (value, fallback) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  };
+
   return {
-    zSpacing: clamp(Number(opts.zSpacing ?? 0.42), 0.15, 1.2),
-    branchSpread: clamp(Number(opts.branchSpread ?? 1.0), 0.45, 2.0),
-    layers: Math.round(clamp(Number(opts.layers ?? 5), 3, 8)),
-    sphereRadiusRatio: clamp(Number(opts.sphereRadiusRatio ?? 0.14), 0.06, 0.35),
-    connectionThickness: clamp(Number(opts.connectionThickness ?? 1.2), 0.3, 2.5),
-    variant: opts.variant ?? "kircher",
+    zSpacing: clamp(num(opts.zSpacing, 0.42), 0.15, 1.2),
+    branchSpread: clamp(num(opts.branchSpread, 1.0), 0.45, 2.0),
+    layers: Math.round(clamp(num(opts.layers, 5), 3, 8)),
+    sphereRadiusRatio: clamp(num(opts.sphereRadiusRatio, 0.14), 0.06, 0.35),
+    connectionThickness: clamp(num(opts.connectionThickness, 1.2), 0.3, 2.5),
+    variant: typeof opts.variant === "string" && opts.variant ? opts.variant : "kircher",
   };
 }
 

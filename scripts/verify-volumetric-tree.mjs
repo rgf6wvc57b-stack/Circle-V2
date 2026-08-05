@@ -127,6 +127,23 @@ const r = 1.2;
   assert(clamped.connectionThickness === 2.5, "connectionThickness clamped to max");
 }
 
+// --- Non-finite inputs fall back to defaults before clamping ---
+{
+  const defaults = normalizeVolumetricOpts({});
+  const invalid = normalizeVolumetricOpts({
+    zSpacing: "invalid",
+    branchSpread: NaN,
+    layers: Infinity,
+    sphereRadiusRatio: -Infinity,
+    connectionThickness: "invalid",
+  });
+  assert(invalid.zSpacing === defaults.zSpacing, "non-finite zSpacing uses default", String(invalid.zSpacing));
+  assert(invalid.branchSpread === defaults.branchSpread, "NaN branchSpread uses default");
+  assert(invalid.layers === defaults.layers, "Infinity layers uses default", String(invalid.layers));
+  assert(invalid.sphereRadiusRatio === defaults.sphereRadiusRatio, "-Infinity sphereRadiusRatio uses default");
+  assert(invalid.connectionThickness === defaults.connectionThickness, "invalid connectionThickness uses default");
+}
+
 await run("npm", ["run", "build"]);
 
 const port = "4312";
