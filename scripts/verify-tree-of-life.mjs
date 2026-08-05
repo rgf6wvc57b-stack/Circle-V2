@@ -335,6 +335,27 @@ assert(
     "same-plane intersection survives when only XY matches a Sephirah on another Z layer",
     preservedIntersection?.id ?? "none"
   );
+
+  const generatedIntersections = geometric.points.filter((p) => p.meta?.role === "intersection");
+  assert(generatedIntersections.length > 0, "geometric generator emits intersection points");
+  assert(
+    generatedIntersections.every((p) => Math.abs(p.z) > 1e-6),
+    "generated scaffold intersections keep nonzero layout Z depth"
+  );
+  const layoutById = new Map(
+    buildGeometricTreeLayout(r, {
+      flags: { showIntersections: true, showConstructionGeometry: true },
+    }).intersections.map((ix) => [ix.id, ix])
+  );
+  for (const point of generatedIntersections) {
+    const source = layoutById.get(point.id);
+    assert(source, `generated intersection ${point.id} maps to layout intersection`);
+    assert(
+      Math.abs(point.z - source.z) < 1e-9,
+      `generated intersection ${point.id} preserves layout Z for rendering`,
+      `${point.z} vs ${source.z}`
+    );
+  }
 }
 
 // Planar traditional mode remains unchanged (coplanar z=0 construction still works)

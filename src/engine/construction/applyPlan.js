@@ -2,6 +2,15 @@
  * Apply any compass construction plan up to operation index `endIndex` (inclusive).
  * Produces ConstructionData for the renderer — no interpolation of centers.
  */
+function layerStepAtOp(plan, opIndex) {
+  const ends = plan.layerEndOpIndices;
+  if (!ends?.length) return 1;
+  for (let layer = 0; layer < ends.length; layer += 1) {
+    if (opIndex <= ends[layer]) return layer + 1;
+  }
+  return ends.length;
+}
+
 export function applyConstructionPlan(plan, endIndex) {
   const points = [];
   const sphereCenters = [];
@@ -11,6 +20,7 @@ export function applyConstructionPlan(plan, endIndex) {
   const pointById = new Map();
 
   const end = Math.max(-1, Math.min(endIndex, plan.operations.length - 1));
+  const useLayerSteps = plan.stepKind === "layer";
 
   for (let i = 0; i <= end; i += 1) {
     const op = plan.operations[i];
@@ -22,7 +32,7 @@ export function applyConstructionPlan(plan, endIndex) {
         y: op.point.y,
         z: op.point.z,
         label: op.label ?? op.pointId,
-        step: points.length + 1,
+        step: useLayerSteps ? layerStepAtOp(plan, i) : points.length + 1,
         justification: op.justification,
         determinedBy: op.determinedBy,
         meta: role
@@ -39,7 +49,9 @@ export function applyConstructionPlan(plan, endIndex) {
     }
     if (op.type === "drawSphere") {
       const centerPoint = pointById.get(op.centerId);
-      const constructionStep = centerPoint?.step ?? sphereCenters.length + 1;
+      const constructionStep = useLayerSteps
+        ? layerStepAtOp(plan, i)
+        : centerPoint?.step ?? sphereCenters.length + 1;
       sphereCenters.push({
         id: op.sphereId,
         pointId: op.centerId,
@@ -61,7 +73,7 @@ export function applyConstructionPlan(plan, endIndex) {
         id: op.edgeId ?? `edge-${op.from}-${op.to}`,
         from: op.from,
         to: op.to,
-        step: sphereCenters.length,
+        step: useLayerSteps ? layerStepAtOp(plan, i) : sphereCenters.length,
         label: op.label,
         meta: op.meta,
       });
@@ -71,7 +83,7 @@ export function applyConstructionPlan(plan, endIndex) {
         faces.push({
           id: op.faceId ?? `face-${faces.length}`,
           pointIds: [...op.pointIds],
-          step: sphereCenters.length,
+          step: useLayerSteps ? layerStepAtOp(plan, i) : sphereCenters.length,
         });
       }
     }
@@ -135,6 +147,7 @@ export function finalizePlan(plan) {
 export function finalizeLayerPlan(plan, layerEndOpIndices) {
   plan.sphereCount = layerEndOpIndices.length;
   plan.stepKind = "layer";
+  plan.layerEndOpIndices = layerEndOpIndices;
   plan.operationIndexForSphereCount = (count) => {
     if (count <= 0) return -1;
     const idx = Math.min(count, layerEndOpIndices.length) - 1;

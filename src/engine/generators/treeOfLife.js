@@ -170,7 +170,7 @@ function generateGeometric(radius, opts) {
         id: ix.id,
         x: ix.x,
         y: ix.y,
-        z: 0,
+        z: ix.z,
         label: "",
         step: 20 + i,
         meta: { role: "intersection", parents: ix.parents },

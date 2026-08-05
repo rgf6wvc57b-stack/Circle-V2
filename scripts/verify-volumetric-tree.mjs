@@ -163,6 +163,37 @@ const r = 1.2;
     "final layer step shows all 22 tree paths",
     String(finalApplied.edges.length)
   );
+
+  const objectSteps = [
+    ...finalApplied.points.map((p) => p.step),
+    ...finalApplied.edges.map((e) => e.step),
+    ...finalApplied.sphereCenters.map((s) => s.constructionStep),
+    ...finalApplied.circleCenters.map((c) => c.constructionStep),
+  ];
+  assert(
+    objectSteps.every((step) => step >= 0 && step <= finalApplied.maxStep),
+    "all layer-plan object steps stay within 0..maxStep",
+    `max=${finalApplied.maxStep} observed=${Math.max(...objectSteps)}`
+  );
+
+  const multiSphereLayerIdx = layout.layerGroups.findIndex((group) => group.length > 1);
+  assert(multiSphereLayerIdx >= 0, "layout has a layer with multiple spheres");
+  const expectedLayerStep = multiSphereLayerIdx + 1;
+  const multiSphereIds = new Set(layout.layerGroups[multiSphereLayerIdx].map((s) => s.id));
+  const multiSpherePointSteps = finalApplied.points
+    .filter((p) => multiSphereIds.has(p.id))
+    .map((p) => p.step);
+  assert(
+    multiSpherePointSteps.length === multiSphereIds.size,
+    "multi-sphere layer places every Sephirah point",
+    `${multiSpherePointSteps.length} vs ${multiSphereIds.size}`
+  );
+  assert(
+    new Set(multiSpherePointSteps).size === 1 &&
+      multiSpherePointSteps[0] === expectedLayerStep,
+    "multiple spheres in one layer share the same layer step",
+    multiSpherePointSteps.join(",")
+  );
 }
 
 // --- Generator + plan + engine totals stay aligned ---
