@@ -76,10 +76,12 @@ export function resolveStartupConstructionStep({
   stateLoaded,
   constructionMode,
   legacyFullStep = false,
+  constructionStepAbsent = false,
 }) {
   const max = Math.max(0, Math.round(Number(maxStep) || 0));
   if (max === 0) return 0;
   if (legacyFullStep || isLegacyFullConstructionStep(step)) return max;
+  if (constructionStepAbsent && !constructionMode) return max;
   if (!stateLoaded && !constructionMode) return max;
   return resolveConstructionStep(step, max);
 }

@@ -161,6 +161,8 @@ const ui = {
   radius: 1.2,
   pathThickness: 1,
   constructionStep: 1,
+  /** @type {boolean} Saved state omitted constructionStep (legacy pre-step field). */
+  constructionStepAbsent: false,
   /** @type {boolean} Legacy saved state used MAX_SAFE_INTEGER for full geometry. */
   pendingLegacyFullConstructionStep: false,
   constructionMode: false,
@@ -579,12 +581,21 @@ function loadState() {
     }
 
     Object.assign(ui, state);
-    const savedStep = state.constructionStep;
+    const hasExplicitConstructionStep = Object.prototype.hasOwnProperty.call(
+      state,
+      "constructionStep"
+    );
+    ui.constructionStepAbsent = !hasExplicitConstructionStep;
+    const savedStep = hasExplicitConstructionStep ? state.constructionStep : undefined;
     ui.pendingLegacyFullConstructionStep = isLegacyFullConstructionStep(savedStep);
     if (ui.pendingLegacyFullConstructionStep) {
       ui.constructionStep = Number.MAX_SAFE_INTEGER;
-    } else if (isInvalidConstructionStep(ui.constructionStep)) {
-      ui.constructionStep = 1;
+    } else if (hasExplicitConstructionStep) {
+      if (isInvalidConstructionStep(savedStep)) {
+        ui.constructionStep = 1;
+      } else {
+        ui.constructionStep = savedStep;
+      }
     }
     normalizeVolumetricUiState();
     return true;
@@ -1370,7 +1381,8 @@ function syncDiscovery() {
     step = st.stepIndex;
     maxStep = Math.max(0, st.totalSteps - 1);
   } else if (ui.constructionMode) {
-    step = player.getState().displayStep || player.getState().step || 1;
+    const playerState = player.getState();
+    step = clampConstructionStep(playerState.displayStep ?? playerState.step ?? 0, maxStep);
   }
   discoveryEngine.setContext({ step, maxStep });
   discoveryEngine.setData(data);
@@ -1417,8 +1429,9 @@ function syncStepDisplay() {
   const total = ui.constructionMode
     ? Math.max(0, state.totalSteps || engineMax)
     : engineMax;
+  const playerStep = state.displayStep ?? state.step ?? 0;
   const current = ui.constructionMode
-    ? clampConstructionStep(Math.max(1, state.displayStep || state.step || 1), total)
+    ? clampConstructionStep(playerStep, total)
     : clampConstructionStep(ui.constructionStep, total);
   document.getElementById("stepCurrent").textContent = String(current);
   document.getElementById("stepTotal").textContent = String(total);
@@ -1435,6 +1448,7 @@ function syncStepDisplay() {
   const constructionSlider = document.getElementById("constructionStepSlider");
   const constructionSliderValue = document.getElementById("constructionStepSliderValue");
   if (constructionSlider) {
+    constructionSlider.min = "0";
     constructionSlider.max = String(Math.max(0, total));
     if (ui.constructionMode) {
       constructionSlider.value = String(current);
@@ -1484,6 +1498,10 @@ function enterConstructionMode() {
   player.setAnimSpeed(ui.animSpeed);
   player.setAutoPlay(ui.autoPlay);
   player.restart({ autoStart: ui.autoPlay });
+  if (!ui.autoPlay) {
+    const step = clampConstructionStep(ui.constructionStep, getMaxConstructionStep());
+    player.goToSphereCount(step);
+  }
   syncConstructionUI();
   syncDisplayOverlays();
 }
@@ -2723,7 +2741,9 @@ ui.constructionStep = resolveStartupConstructionStep({
   stateLoaded,
   constructionMode: ui.constructionMode,
   legacyFullStep,
+  constructionStepAbsent: ui.constructionStepAbsent,
 });
+ui.constructionStepAbsent = false;
 ui.pendingLegacyFullConstructionStep = false;
 if (legacyFullStep) {
   upgradeLegacyConstructionStepInStorage(maxStep);
@@ -3067,6 +3087,7 @@ window.__studyTestHooks = {
 window.__constructionTestHooks = {
   getUiConstructionStep: () => ui.constructionStep,
   hadPendingLegacyFullConstructionStep: () => ui.pendingLegacyFullConstructionStep,
+  hadConstructionStepAbsent: () => ui.constructionStepAbsent,
   isConstructionMode: () => ui.constructionMode,
   getGeometryId: () => ui.geometry,
   getFullSphereCount: () => engine.getFullData()?.sphereCenters?.length ?? 0,
@@ -3075,6 +3096,10 @@ window.__constructionTestHooks = {
   getVisibleSphereCount: () => engine.getVisibleData()?.sphereCenters?.length ?? 0,
   getLayersLabel: () => document.getElementById("layersValue")?.textContent ?? "",
   getSliderValue: () => document.getElementById("layers")?.value ?? "",
+  getStepCurrent: () => document.getElementById("stepCurrent")?.textContent ?? "",
+  getStepTotal: () => document.getElementById("stepTotal")?.textContent ?? "",
+  getPlayerDisplayStep: () => player.getState().displayStep ?? player.getState().step ?? 0,
+  getDiscoveryStep: () => discoveryEngine.ctx?.step ?? null,
   getMaxConstructionStep: () => getMaxConstructionStep(),
   resolveConstructionStep: (step) => resolveConstructionStep(step, getMaxConstructionStep()),
   countExpectedVisibleSpheres: (step) =>

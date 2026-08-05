@@ -43,7 +43,7 @@ export class ConstructionPlayer {
       playing: this.playing,
       autoPlay: this.autoPlay,
       phase: this.phase,
-      step: Math.max(1, this.completedSpheres || (this.phase === "idle" ? 0 : 1)),
+      step: this.#displayStep(),
       displayStep: this.#displayStep(),
       totalSteps: this.plan?.sphereCount ?? 1,
       compassProgress: this.compassProgress,
@@ -274,7 +274,11 @@ export class ConstructionPlayer {
     this.activeDrawOps = [];
     this.engine.clearDrawProgress();
     this.engine.setActiveId(null);
-    const target = Math.max(1, Math.min(this.plan.sphereCount, Number(count) || 1));
+    const raw = Number(count);
+    const target = Math.max(
+      0,
+      Math.min(this.plan.sphereCount, Number.isFinite(raw) ? raw : 1)
+    );
     this.#snapToSphereCount(target);
     this.#emit();
   }

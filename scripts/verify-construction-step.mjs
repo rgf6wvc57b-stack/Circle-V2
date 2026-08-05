@@ -56,6 +56,36 @@ assert(
 assert(
   resolveStartupConstructionStep({
     step: 1,
+    maxStep: 19,
+    stateLoaded: true,
+    constructionMode: false,
+    constructionStepAbsent: true,
+  }) === 19,
+  "legacy saved state without constructionStep opens at full geometry"
+);
+assert(
+  resolveStartupConstructionStep({
+    step: 1,
+    maxStep: 19,
+    stateLoaded: true,
+    constructionMode: false,
+    constructionStepAbsent: false,
+  }) === 1,
+  "explicit saved constructionStep 1 is preserved"
+);
+assert(
+  resolveStartupConstructionStep({
+    step: 0,
+    maxStep: 19,
+    stateLoaded: true,
+    constructionMode: false,
+    constructionStepAbsent: false,
+  }) === 0,
+  "explicit saved constructionStep 0 is preserved"
+);
+assert(
+  resolveStartupConstructionStep({
+    step: 1,
     maxStep: 2,
     stateLoaded: true,
     constructionMode: false,
@@ -91,6 +121,14 @@ assert(
   "loadState preserves legacy full-step sentinel until engine max is known"
 );
 assert(
+  /constructionStepAbsent/.test(mainSrc),
+  "loadState tracks saved states that omit constructionStep"
+);
+assert(
+  /Object\.prototype\.hasOwnProperty\.call\(\s*state,\s*"constructionStep"\s*\)/.test(mainSrc),
+  "loadState distinguishes absent constructionStep from explicit values"
+);
+assert(
   !/ui\.constructionStep\s*=\s*Number\.MAX_SAFE_INTEGER/.test(mainSrc) ||
     /isLegacyFullConstructionStep\(savedStep\)/.test(mainSrc),
   "main.js only rehydrates MAX_SAFE_INTEGER for legacy saved state"
@@ -99,6 +137,10 @@ assert(!/ui\.constructionStep \|\|/.test(mainSrc), "no truthy fallback on constr
 assert(
   !/setStep\(Math\.max\(1,\s*ui\.constructionStep/.test(mainSrc),
   "showStaticStep does not coerce step 0 to max via truthy fallback"
+);
+assert(
+  !/displayStep \|\|/.test(mainSrc) || /displayStep \?\?/.test(mainSrc),
+  "syncDiscovery uses nullish coalescing for player display step"
 );
 
 // --- Engine + clamp stay aligned for static stepping ---
@@ -451,6 +493,189 @@ try {
     Number(legacyUpgrade.visible) === Number(legacyUpgrade.sliderMax),
     "legacy sentinel renders full geometry",
     String(legacyUpgrade.visible)
+  );
+
+  const legacyMissingStepPage = await browser.newPage();
+  await legacyMissingStepPage.evaluateOnNewDocument(() => {
+    localStorage.clear();
+    localStorage.setItem("geometry-explor:show-intro-on-open", "0");
+    localStorage.setItem(
+      "geometryExplorState_v1",
+      JSON.stringify({
+        geometry: "flowerOfLife",
+        activeRenderLayers: ["spheres"],
+        radius: 1.2,
+      })
+    );
+  });
+  await legacyMissingStepPage.goto(base, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await sleep(1200);
+
+  const legacyMissingStep = await legacyMissingStepPage.evaluate(() => ({
+    uiStep: window.__constructionTestHooks.getUiConstructionStep(),
+    engineStep: window.__constructionTestHooks.getEngineStep(),
+    maxStep: window.__constructionTestHooks.getMaxConstructionStep(),
+    visibleSpheres: window.__constructionTestHooks.getVisibleSphereCount(),
+    fullSpheres: window.__constructionTestHooks.getFullSphereCount(),
+    label: window.__constructionTestHooks.getLayersLabel(),
+    savedHasConstructionStep: JSON.parse(localStorage.getItem("geometryExplorState_v1") || "{}")
+      .constructionStep,
+  }));
+
+  await legacyMissingStepPage.close();
+
+  assert(
+    legacyMissingStep.savedHasConstructionStep === undefined,
+    "fixture saved state omits constructionStep"
+  );
+  assert(
+    legacyMissingStep.uiStep === legacyMissingStep.maxStep,
+    "legacy saved state without constructionStep opens at full geometry",
+    `${legacyMissingStep.uiStep} vs ${legacyMissingStep.maxStep}`
+  );
+  assert(
+    legacyMissingStep.engineStep === legacyMissingStep.maxStep,
+    "engine step matches full geometry for missing constructionStep",
+    `${legacyMissingStep.engineStep} vs ${legacyMissingStep.maxStep}`
+  );
+  assert(
+    legacyMissingStep.visibleSpheres === legacyMissingStep.fullSpheres,
+    "missing constructionStep renders complete geometry",
+    `${legacyMissingStep.visibleSpheres} vs ${legacyMissingStep.fullSpheres}`
+  );
+  assert(
+    legacyMissingStep.label === `${legacyMissingStep.maxStep} / ${legacyMissingStep.maxStep}`,
+    "missing constructionStep label shows full step",
+    legacyMissingStep.label
+  );
+
+  const explicitStepOnePage = await browser.newPage();
+  await explicitStepOnePage.evaluateOnNewDocument(() => {
+    localStorage.clear();
+    localStorage.setItem("geometry-explor:show-intro-on-open", "0");
+    localStorage.setItem(
+      "geometryExplorState_v1",
+      JSON.stringify({
+        geometry: "flowerOfLife",
+        constructionStep: 1,
+        activeRenderLayers: ["spheres"],
+        radius: 1.2,
+      })
+    );
+  });
+  await explicitStepOnePage.goto(base, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await sleep(1200);
+
+  const explicitStepOne = await explicitStepOnePage.evaluate(() => ({
+    uiStep: window.__constructionTestHooks.getUiConstructionStep(),
+    engineStep: window.__constructionTestHooks.getEngineStep(),
+    visibleSpheres: window.__constructionTestHooks.getVisibleSphereCount(),
+    expectedVisible: window.__constructionTestHooks.countExpectedVisibleSpheres(1),
+    label: window.__constructionTestHooks.getLayersLabel(),
+    maxStep: window.__constructionTestHooks.getMaxConstructionStep(),
+  }));
+
+  await explicitStepOnePage.close();
+
+  assert(explicitStepOne.uiStep === 1, "explicit saved step 1 remains step 1", String(explicitStepOne.uiStep));
+  assert(explicitStepOne.engineStep === 1, "engine honors explicit saved step 1", String(explicitStepOne.engineStep));
+  assert(
+    explicitStepOne.visibleSpheres === explicitStepOne.expectedVisible,
+    "explicit saved step 1 renders one sphere",
+    `${explicitStepOne.visibleSpheres} vs ${explicitStepOne.expectedVisible}`
+  );
+  assert(explicitStepOne.label === `1 / ${explicitStepOne.maxStep}`, "explicit step 1 label", explicitStepOne.label);
+
+  const explicitStepZeroPage = await browser.newPage();
+  await explicitStepZeroPage.evaluateOnNewDocument(() => {
+    localStorage.clear();
+    localStorage.setItem("geometry-explor:show-intro-on-open", "0");
+    localStorage.setItem(
+      "geometryExplorState_v1",
+      JSON.stringify({
+        geometry: "flowerOfLife",
+        constructionStep: 0,
+        activeRenderLayers: ["spheres"],
+        radius: 1.2,
+      })
+    );
+  });
+  await explicitStepZeroPage.goto(base, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await sleep(1200);
+
+  const explicitStepZero = await explicitStepZeroPage.evaluate(() => ({
+    uiStep: window.__constructionTestHooks.getUiConstructionStep(),
+    engineStep: window.__constructionTestHooks.getEngineStep(),
+    visibleSpheres: window.__constructionTestHooks.getVisibleSphereCount(),
+    expectedVisible: window.__constructionTestHooks.countExpectedVisibleSpheres(0),
+    label: window.__constructionTestHooks.getLayersLabel(),
+    slider: window.__constructionTestHooks.getSliderValue(),
+    maxStep: window.__constructionTestHooks.getMaxConstructionStep(),
+  }));
+
+  await explicitStepZeroPage.close();
+
+  assert(explicitStepZero.uiStep === 0, "explicit saved step 0 remains step 0", String(explicitStepZero.uiStep));
+  assert(explicitStepZero.engineStep === 0, "engine honors explicit saved step 0", String(explicitStepZero.engineStep));
+  assert(
+    explicitStepZero.visibleSpheres === explicitStepZero.expectedVisible,
+    "explicit saved step 0 renders empty geometry",
+    `${explicitStepZero.visibleSpheres} vs ${explicitStepZero.expectedVisible}`
+  );
+  assert(explicitStepZero.label === `0 / ${explicitStepZero.maxStep}`, "explicit step 0 label", explicitStepZero.label);
+  assert(explicitStepZero.slider === "0", "explicit step 0 slider value", explicitStepZero.slider);
+
+  const constructionStepZeroPage = await browser.newPage();
+  await constructionStepZeroPage.evaluateOnNewDocument(() => {
+    localStorage.clear();
+    localStorage.setItem("geometry-explor:show-intro-on-open", "0");
+  });
+  await constructionStepZeroPage.goto(base, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await sleep(800);
+  await constructionStepZeroPage.select("#geometry", "flowerOfLife");
+  await sleep(500);
+
+  const constructionAtZero = await constructionStepZeroPage.evaluate(async () => {
+    window.__constructionTestHooks.applyStaticStep(0);
+    const cb = document.getElementById("constructionMode");
+    cb.checked = true;
+    cb.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    window.__evolutionTestHooks.syncDiscovery();
+    return {
+      uiStep: window.__constructionTestHooks.getUiConstructionStep(),
+      stepCurrent: window.__constructionTestHooks.getStepCurrent(),
+      stepTotal: window.__constructionTestHooks.getStepTotal(),
+      playerStep: window.__constructionTestHooks.getPlayerDisplayStep(),
+      discoveryStep: window.__constructionTestHooks.getDiscoveryStep(),
+      visibleSpheres: window.__constructionTestHooks.getVisibleSphereCount(),
+      slider: document.getElementById("constructionStepSlider")?.value ?? "",
+      sliderValue: document.getElementById("constructionStepSliderValue")?.textContent ?? "",
+      maxStep: window.__constructionTestHooks.getMaxConstructionStep(),
+    };
+  });
+
+  await constructionStepZeroPage.close();
+
+  assert(constructionAtZero.uiStep === 0, "construction mode keeps ui step 0", String(constructionAtZero.uiStep));
+  assert(constructionAtZero.stepCurrent === "0", "syncStepDisplay shows stepCurrent 0", constructionAtZero.stepCurrent);
+  assert(
+    constructionAtZero.stepTotal === String(constructionAtZero.maxStep),
+    "syncStepDisplay shows total steps",
+    constructionAtZero.stepTotal
+  );
+  assert(constructionAtZero.playerStep === 0, "player display step remains 0", String(constructionAtZero.playerStep));
+  assert(constructionAtZero.discoveryStep === 0, "syncDiscovery uses step 0", String(constructionAtZero.discoveryStep));
+  assert(
+    constructionAtZero.visibleSpheres === 0,
+    "construction mode step 0 shows no spheres",
+    String(constructionAtZero.visibleSpheres)
+  );
+  assert(constructionAtZero.slider === "0", "construction slider stays at 0", constructionAtZero.slider);
+  assert(
+    constructionAtZero.sliderValue === `0 / ${constructionAtZero.maxStep}`,
+    "construction slider label shows 0 / total",
+    constructionAtZero.sliderValue
   );
 
   await browser.close();
