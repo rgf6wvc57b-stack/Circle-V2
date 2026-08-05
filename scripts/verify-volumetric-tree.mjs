@@ -27,6 +27,13 @@ import {
 } from "../src/engine/renderer/uiRenderModes.js";
 import { TREE_VIEW_MODES } from "../src/engine/treeOfLife/modes.js";
 import { SEPHIROT_IDS } from "../src/engine/treeOfLife/graph.js";
+import {
+  VOLUMETRIC_FIT_MARGIN,
+  VOLUMETRIC_FIT_DISTANCE_SCALE,
+  VOLUMETRIC_MIN_FRAMING_SIZE,
+  VOLUMETRIC_MIN_CAMERA_DISTANCE,
+} from "../src/exploration/framingDefaults.js";
+import { CameraController } from "../src/exploration/CameraController.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
@@ -565,6 +572,75 @@ function beginLayerAnimation(engine, completedLayers) {
   );
 }
 
+// --- Volumetric camera framing policy ---
+{
+  const mainSrc = readFileSync(join(root, "src/main.js"), "utf8");
+  assert(VOLUMETRIC_FIT_MARGIN < 0.2, "volumetric fit margin is tighter than calm default");
+  assert(VOLUMETRIC_MIN_CAMERA_DISTANCE < 3, "volumetric min camera distance below calm floor");
+  assert(/usesVolumetricTreeFraming/.test(mainSrc), "main.js defines volumetric framing guard");
+  assert(/VOLUMETRIC_FIT_MARGIN/.test(mainSrc), "main.js imports volumetric fit margin");
+  assert(/measureGeometryScreenFraming/.test(mainSrc), "main.js measures geometry screen framing");
+
+  const ctrl = new CameraController({
+    scene: new THREE.Scene(),
+    domElement: {
+      style: {},
+      addEventListener() {},
+      removeEventListener() {},
+      setPointerCapture() {},
+      releasePointerCapture() {},
+      getRootNode() {
+        return this;
+      },
+      getBoundingClientRect: () => ({
+        left: 0,
+        top: 0,
+        width: 1200,
+        height: 1536,
+        right: 1200,
+        bottom: 1536,
+      }),
+      ownerDocument: { addEventListener() {}, removeEventListener() {} },
+    },
+    aspect: 1200 / 1536,
+  });
+  ctrl.setAvailableViewRect({
+    fullWidth: 2048,
+    fullHeight: 1536,
+    x: 0,
+    y: 0,
+    width: 1712,
+    height: 1536,
+  });
+  const box = new THREE.Box3(new THREE.Vector3(-2, -2.5, -1), new THREE.Vector3(2, 2.5, 1));
+  const center = box.getCenter(new THREE.Vector3());
+  ctrl.frameBox(box, {
+    animate: false,
+    duration: 0,
+    margin: VOLUMETRIC_FIT_MARGIN,
+    minDistance: VOLUMETRIC_MIN_CAMERA_DISTANCE,
+    minFramingSize: VOLUMETRIC_MIN_FRAMING_SIZE,
+    useBoundingSphere: true,
+    distanceScale: VOLUMETRIC_FIT_DISTANCE_SCALE,
+  });
+  const dist = ctrl.camera.position.distanceTo(ctrl.controls.target);
+  const diag = box.getSize(new THREE.Vector3()).length();
+  const padded = diag * (1 + VOLUMETRIC_FIT_MARGIN * 2);
+  const fov = (ctrl.perspective.fov * Math.PI) / 180;
+  const fitH = padded / (2 * Math.tan(fov / 2));
+  const expected = Math.max(fitH, fitH) * VOLUMETRIC_FIT_DISTANCE_SCALE;
+  assert(
+    Math.abs(dist - expected) < 0.5,
+    "volumetric frameBox uses bounding-sphere distance",
+    `${dist.toFixed(2)} vs ${expected.toFixed(2)}`
+  );
+  assert(
+    ctrl.controls.target.distanceTo(center) < 1e-5,
+    "volumetric frameBox targets geometric center"
+  );
+  assert(dist < 12, "volumetric framing is closer than calm Vesica default", dist.toFixed(2));
+}
+
 await run("npm", ["run", "build"]);
 
 const port = "4312";
@@ -916,6 +992,78 @@ try {
   assert(stepTotals.max === 5, "browser max step is 5 layers", String(stepTotals.max));
   assert(stepTotals.label === "1 / 5" || stepTotals.label.endsWith("/ 5"), "layers label uses layer total", stepTotals.label);
   assert(stepTotals.playerTotal === 5, "construction player total matches layers", String(stepTotals.playerTotal));
+
+  await page.setViewport({ width: 2048, height: 1536, deviceScaleFactor: 1 });
+  await sleep(200);
+
+  const framingAfterPerspectiveReset = await page.evaluate(async () => {
+    const max = window.__volumetricTestHooks.getMaxStep();
+    window.__constructionTestHooks.applyStaticStep(max);
+    const axis = document.getElementById("volumetricShowAxis");
+    if (axis) {
+      axis.checked = false;
+      axis.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    window.__volumetricTestHooks.frameActiveConstruction({ animate: false, duration: 0 });
+    document.querySelector('#viewPresets [data-preset="perspective"]')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    document.getElementById("resetView")?.click();
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    window.__volumetricTestHooks.frameActiveConstruction({ animate: false, duration: 0 });
+    return window.__volumetricTestHooks.measureGeometryFraming();
+  });
+
+  assert(
+    framingAfterPerspectiveReset &&
+      framingAfterPerspectiveReset.spanFraction >= 0.62 &&
+      framingAfterPerspectiveReset.spanFraction <= 0.88,
+    "complete volumetric tree fills 70–80% of usable viewport (panel open)",
+    framingAfterPerspectiveReset
+      ? `${(framingAfterPerspectiveReset.spanFraction * 100).toFixed(1)}%`
+      : "null"
+  );
+  assert(
+    framingAfterPerspectiveReset?.fullyVisible,
+    "complete volumetric tree stays inside viewport with margin",
+    String(framingAfterPerspectiveReset?.fullyVisible)
+  );
+  assert(
+    framingAfterPerspectiveReset &&
+      Math.abs(framingAfterPerspectiveReset.centerOffsetX) < 120 &&
+      Math.abs(framingAfterPerspectiveReset.centerOffsetY) < 120,
+    "volumetric tree is centered in usable canvas",
+    framingAfterPerspectiveReset
+      ? `${framingAfterPerspectiveReset.centerOffsetX.toFixed(1)}, ${framingAfterPerspectiveReset.centerOffsetY.toFixed(1)}`
+      : "null"
+  );
+  const target = framingAfterPerspectiveReset?.orbitTarget ?? [];
+  const geoCenter = framingAfterPerspectiveReset?.geometricCenter ?? [];
+  assert(
+    target.length === 3 &&
+      geoCenter.length === 3 &&
+      Math.hypot(
+        target[0] - geoCenter[0],
+        target[1] - geoCenter[1],
+        target[2] - geoCenter[2]
+      ) < 0.05,
+    "orbit target matches geometric center",
+    `${target.join(",")} vs ${geoCenter.join(",")}`
+  );
+
+  const framingAfterSecondReset = await page.evaluate(async () => {
+    document.getElementById("resetView")?.click();
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    window.__volumetricTestHooks.frameActiveConstruction({ animate: false, duration: 0 });
+    return window.__volumetricTestHooks.measureGeometryFraming();
+  });
+  assert(
+    framingAfterSecondReset &&
+      Math.abs(framingAfterSecondReset.spanFraction - framingAfterPerspectiveReset.spanFraction) < 0.08,
+    "Reset View restores the same fitted framing",
+    framingAfterSecondReset
+      ? `${(framingAfterSecondReset.spanFraction * 100).toFixed(1)}% vs ${(framingAfterPerspectiveReset.spanFraction * 100).toFixed(1)}%`
+      : "null"
+  );
 
   const presets = [
     { name: "front", preset: "front" },

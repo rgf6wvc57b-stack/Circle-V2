@@ -10,6 +10,10 @@ import {
   MOBILE_TUTORIAL_FIT_MARGIN,
   MOBILE_TUTORIAL_MIN_DISTANCE,
   FRONT_FRAME_DIRECTION,
+  VOLUMETRIC_FIT_MARGIN,
+  VOLUMETRIC_FIT_DISTANCE_SCALE,
+  VOLUMETRIC_MIN_FRAMING_SIZE,
+  VOLUMETRIC_MIN_CAMERA_DISTANCE,
 } from "./exploration/framingDefaults.js";
 import { FocusSystem } from "./exploration/FocusSystem.js";
 import { MeasurementMode } from "./exploration/MeasurementMode.js";
@@ -1029,6 +1033,85 @@ function syncEvolutionUI() {
   slider.value = String(state.stepIndex);
 }
 
+function usesVolumetricTreeFraming() {
+  return ui.geometry === "treeOfLife" && ui.treeViewMode === "volumetric";
+}
+
+function isVolumetricTreeAtFullGeometry() {
+  if (!usesVolumetricTreeFraming()) return false;
+  const max = getMaxConstructionStep();
+  if (ui.constructionMode) {
+    const state = player.getState();
+    return state.step >= state.totalSteps || state.step >= max;
+  }
+  return ui.constructionStep >= max;
+}
+
+function framingOptionsForActiveConstruction({ expandOnly = false } = {}) {
+  const phoneTutorial =
+    document.body.classList.contains("mobile-tutorial") && isMobileTutorialLayout();
+  if (phoneTutorial) {
+    return {
+      margin: MOBILE_TUTORIAL_FIT_MARGIN,
+      minDistance: MOBILE_TUTORIAL_MIN_DISTANCE,
+      fitAvailableHeight: true,
+      expandOnly,
+      minFramingSize: undefined,
+      useBoundingSphere: false,
+      distanceScale: undefined,
+      direction: new THREE.Vector3(
+        FRONT_FRAME_DIRECTION.x,
+        FRONT_FRAME_DIRECTION.y,
+        FRONT_FRAME_DIRECTION.z
+      ),
+    };
+  }
+  if (usesVolumetricTreeFraming()) {
+    const atFull = isVolumetricTreeAtFullGeometry();
+    return {
+      margin: VOLUMETRIC_FIT_MARGIN,
+      minDistance: VOLUMETRIC_MIN_CAMERA_DISTANCE,
+      fitAvailableHeight: false,
+      expandOnly: expandOnly && !atFull,
+      minFramingSize: VOLUMETRIC_MIN_FRAMING_SIZE,
+      useBoundingSphere: true,
+      distanceScale: VOLUMETRIC_FIT_DISTANCE_SCALE,
+      direction: null,
+    };
+  }
+  return {
+    margin: DEFAULT_FIT_MARGIN,
+    minDistance: undefined,
+    fitAvailableHeight: false,
+    expandOnly,
+    minFramingSize: undefined,
+    useBoundingSphere: false,
+    distanceScale: undefined,
+    direction: null,
+  };
+}
+
+function expandConstructionDataBounds(box, data) {
+  if (!data) return;
+  const pointById = new Map(data.points.map((p) => [p.id, p]));
+  for (const p of data.points) {
+    box.expandByPoint(new THREE.Vector3(p.x, p.y, p.z));
+  }
+  for (const s of data.sphereCenters ?? []) {
+    const p = pointById.get(s.pointId);
+    if (!p) continue;
+    const r = Number(s.radius) || 0;
+    box.expandByPoint(new THREE.Vector3(p.x + r, p.y + r, p.z + r));
+    box.expandByPoint(new THREE.Vector3(p.x - r, p.y - r, p.z - r));
+  }
+  for (const e of data.edges ?? []) {
+    const a = pointById.get(e.from);
+    const b = pointById.get(e.to);
+    if (a) box.expandByPoint(new THREE.Vector3(a.x, a.y, a.z));
+    if (b) box.expandByPoint(new THREE.Vector3(b.x, b.y, b.z));
+  }
+}
+
 function computeDesignBox() {
   const data = engine.getVisibleData();
   const r = ui.radius;
@@ -1037,6 +1120,16 @@ function computeDesignBox() {
     new THREE.Vector3(-extent, -extent, -extent * 0.35),
     new THREE.Vector3(extent, extent, extent * 0.35)
   );
+
+  if (usesVolumetricTreeFraming() && data) {
+    const measured = new THREE.Box3();
+    expandConstructionDataBounds(measured, data);
+    if (designGroup.children.length) {
+      const meshBox = new THREE.Box3().setFromObject(designGroup);
+      if (!meshBox.isEmpty()) measured.union(meshBox);
+    }
+    if (!measured.isEmpty()) return measured;
+  }
 
   if (designGroup.children.length) {
     const measured = new THREE.Box3().setFromObject(designGroup);
@@ -1144,28 +1237,19 @@ function frameActiveConstruction({
   const box = computeDesignBox();
   focusSystem.clear({ restoreCamera: false });
 
-  const phoneTutorial =
-    document.body.classList.contains("mobile-tutorial") && isMobileTutorialLayout();
-  const fitMargin =
-    margin ?? (phoneTutorial ? MOBILE_TUTORIAL_FIT_MARGIN : DEFAULT_FIT_MARGIN);
-  const fitDirection =
-    direction ??
-    (phoneTutorial
-      ? new THREE.Vector3(
-          FRONT_FRAME_DIRECTION.x,
-          FRONT_FRAME_DIRECTION.y,
-          FRONT_FRAME_DIRECTION.z
-        )
-      : null);
+  const policy = framingOptionsForActiveConstruction({ expandOnly });
 
   cameraController.frameBox(box, {
-    margin: fitMargin,
+    margin: margin ?? policy.margin,
     duration,
     animate,
-    expandOnly,
-    direction: fitDirection,
-    minDistance: phoneTutorial ? MOBILE_TUTORIAL_MIN_DISTANCE : undefined,
-    fitAvailableHeight: phoneTutorial,
+    expandOnly: policy.expandOnly,
+    direction: direction ?? policy.direction,
+    minDistance: policy.minDistance,
+    fitAvailableHeight: policy.fitAvailableHeight,
+    minFramingSize: policy.minFramingSize,
+    useBoundingSphere: policy.useBoundingSphere,
+    distanceScale: policy.distanceScale,
   });
   publishFramingDebug();
 }
@@ -1195,6 +1279,72 @@ function publishFramingDebug() {
     canvas.dataset.usableHeight = String(measure.usableHeight);
     canvas.dataset.sphereScreenHeight = String(measure.sphereHeight);
   }
+}
+
+function measureGeometryScreenFraming() {
+  const rect = syncViewLayout();
+  const cam = cameraController.getActiveCamera();
+  cam.updateMatrixWorld(true);
+  const fullW = rect.fullWidth ?? window.innerWidth;
+  const fullH = rect.fullHeight ?? window.innerHeight;
+  const box = computeDesignBox();
+  if (!box || box.isEmpty()) return null;
+
+  const corners = [
+    new THREE.Vector3(box.min.x, box.min.y, box.min.z),
+    new THREE.Vector3(box.min.x, box.min.y, box.max.z),
+    new THREE.Vector3(box.min.x, box.max.y, box.min.z),
+    new THREE.Vector3(box.min.x, box.max.y, box.max.z),
+    new THREE.Vector3(box.max.x, box.min.y, box.min.z),
+    new THREE.Vector3(box.max.x, box.min.y, box.max.z),
+    new THREE.Vector3(box.max.x, box.max.y, box.min.z),
+    new THREE.Vector3(box.max.x, box.max.y, box.max.z),
+  ];
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const corner of corners) {
+    const ndc = corner.clone().project(cam);
+    const x = (ndc.x * 0.5 + 0.5) * fullW;
+    const y = (-ndc.y * 0.5 + 0.5) * fullH;
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+
+  const geomWidth = Math.max(0, maxX - minX);
+  const geomHeight = Math.max(0, maxY - minY);
+  const geomSpan = Math.max(geomWidth, geomHeight);
+  const usableSpan = Math.min(rect.width, rect.height);
+  const center = box.getCenter(new THREE.Vector3());
+  const centerNdc = center.clone().project(cam);
+  const centerX = (centerNdc.x * 0.5 + 0.5) * fullW;
+  const centerY = (-centerNdc.y * 0.5 + 0.5) * fullH;
+  const availCx = rect.x + rect.width / 2;
+  const availCy = rect.y + rect.height / 2;
+  const target = cameraController.getOrbitTarget();
+
+  return {
+    geomWidth,
+    geomHeight,
+    geomSpan,
+    usableWidth: rect.width,
+    usableHeight: rect.height,
+    usableSpan,
+    spanFraction: usableSpan > 0 ? geomSpan / usableSpan : 0,
+    centerOffsetX: centerX - availCx,
+    centerOffsetY: centerY - availCy,
+    orbitTarget: [target.x, target.y, target.z],
+    geometricCenter: [center.x, center.y, center.z],
+    fullyVisible:
+      minX >= rect.x - 2 &&
+      minY >= rect.y - 2 &&
+      maxX <= rect.x + rect.width + 2 &&
+      maxY <= rect.y + rect.height + 2,
+  };
 }
 
 function measureSphereScreenSpace() {
@@ -2321,7 +2471,16 @@ function bindControls() {
       frameActiveConstruction({ duration: 0.8 });
       return;
     }
-    cameraController.goToPreset(preset, { duration: 0.8, box });
+    const policy = framingOptionsForActiveConstruction({ expandOnly: false });
+    cameraController.goToPreset(preset, {
+      duration: 0.8,
+      box,
+      margin: policy.margin,
+      minDistance: policy.minDistance,
+      minFramingSize: policy.minFramingSize,
+      useBoundingSphere: policy.useBoundingSphere,
+      distanceScale: policy.distanceScale,
+    });
   });
 
   document.getElementById("measurementMode")?.addEventListener("change", (e) => {
@@ -2630,6 +2789,9 @@ function onViewportResize() {
   
   syncViewLayout();
   positionRendererPopover();
+  if (usesVolumetricTreeFraming() && !studyController.isActive()) {
+    frameActiveConstruction({ animate: false, duration: 0 });
+  }
 }
 
 window.addEventListener("resize", onViewportResize, { passive: true });
@@ -3244,6 +3406,16 @@ window.__volumetricTestHooks = {
       ySpan: Math.max(...ys) - Math.min(...ys),
       zSpan: Math.max(...seph.map((p) => p.z)) - Math.min(...seph.map((p) => p.z)),
     };
+  },
+  measureGeometryFraming: () => measureGeometryScreenFraming(),
+  frameActiveConstruction: (opts) => frameActiveConstruction(opts),
+  getOrbitTarget: () => {
+    const t = cameraController.getOrbitTarget();
+    return [t.x, t.y, t.z];
+  },
+  getGeometricCenter: () => {
+    const c = computeDesignBox().getCenter(new THREE.Vector3());
+    return [c.x, c.y, c.z];
   },
 };
 

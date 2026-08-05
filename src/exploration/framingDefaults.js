@@ -43,3 +43,18 @@ export const MOBILE_TUTORIAL_FIT_MARGIN = 1.15;
  * a ~200px-tall usable rect.
  */
 export const MOBILE_TUTORIAL_MIN_DISTANCE = 16;
+
+/**
+ * Volumetric 3D Tree — target ~70–80% of the shorter usable viewport axis.
+ * Object screen span ≈ 1 / (VOLUMETRIC_FIT_DISTANCE_SCALE * (1 + 2 * margin)).
+ */
+export const VOLUMETRIC_FIT_MARGIN = 0.08;
+
+/** Tight distance pad for volumetric framing (previous global 1.08). */
+export const VOLUMETRIC_FIT_DISTANCE_SCALE = 1.02;
+
+/** Use actual geometry extent — do not inflate small 3D trees via MIN_FRAMING_SIZE. */
+export const VOLUMETRIC_MIN_FRAMING_SIZE = 0.5;
+
+/** Orbit floor for volumetric fit — below calm Vesica MIN_CAMERA_DISTANCE (10). */
+export const VOLUMETRIC_MIN_CAMERA_DISTANCE = 0.8;

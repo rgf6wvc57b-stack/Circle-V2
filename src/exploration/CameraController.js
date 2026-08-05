@@ -227,10 +227,14 @@ export class CameraController {
    *   expandOnly?: boolean,
    *   minDistance?: number,
    *   fitAvailableHeight?: boolean,
+   *   minFramingSize?: number,
+   *   useBoundingSphere?: boolean,
+   *   distanceScale?: number,
    * }} opts
    *   expandOnly — zoom out if the content would clip; never zoom in (construction/evolution).
    *   fitAvailableHeight — scale distance so on-screen size matches the usable
    *     band when a view-offset shortens the visible height (mobile sheet).
+   *   useBoundingSphere — fit the box diagonal (3D extent) instead of the longest edge.
    */
   frameBox(
     box,
@@ -242,6 +246,9 @@ export class CameraController {
       expandOnly = false,
       minDistance = MIN_CAMERA_DISTANCE,
       fitAvailableHeight = false,
+      minFramingSize = MIN_FRAMING_SIZE,
+      useBoundingSphere = false,
+      distanceScale = FIT_DISTANCE_SCALE,
     } = {}
   ) {
     if (!box || box.isEmpty()) return;
@@ -251,9 +258,15 @@ export class CameraController {
     this.constructionCenter.copy(center);
     this.focusPoint.copy(center);
 
-    const maxDim = Math.max(size.x, size.y, size.z, MIN_FRAMING_SIZE);
+    const extentFloor = Math.max(0, Number(minFramingSize) || 0);
+    const maxDim = useBoundingSphere
+      ? Math.max(size.length(), extentFloor)
+      : Math.max(size.x, size.y, size.z, extentFloor);
     const padded = maxDim * (1 + margin * 2);
-    const distanceFloor = Math.max(MIN_CAMERA_DISTANCE, minDistance ?? MIN_CAMERA_DISTANCE);
+    const distanceFloor =
+      minDistance != null && Number.isFinite(minDistance)
+        ? Math.max(0, minDistance)
+        : MIN_CAMERA_DISTANCE;
 
     const dir = (
       direction ??
@@ -274,7 +287,7 @@ export class CameraController {
       const fov = (this.perspective.fov * Math.PI) / 180;
       const fitH = padded / (2 * Math.tan(fov / 2));
       const fitW = padded / (2 * Math.tan(fov / 2) * fitAspect);
-      distance = Math.max(fitH, fitW) * FIT_DISTANCE_SCALE;
+      distance = Math.max(fitH, fitW) * distanceScale;
       // View-offset keeps full vertical FOV while framing uses the shorter
       // available band — scale distance so object size tracks that band.
       if (fitAvailableHeight && this._viewLayout) {
@@ -285,7 +298,7 @@ export class CameraController {
         }
       }
     } else {
-      nextOrtho = (padded / 2) * FIT_DISTANCE_SCALE;
+      nextOrtho = (padded / 2) * distanceScale;
       distance = Math.max(padded * 1.2, distanceFloor);
     }
     distance = Math.max(distance, distanceFloor);
@@ -359,25 +372,48 @@ export class CameraController {
     this.camera.position.copy(this.controls.target).add(offset);
   }
 
-  goToPreset(name, { duration = 0.8, box = null } = {}) {
-    const center = this.focusPoint.clone();
+  goToPreset(
+    name,
+    {
+      duration = 0.8,
+      box = null,
+      margin = DEFAULT_FIT_MARGIN,
+      minDistance = MIN_CAMERA_DISTANCE,
+      minFramingSize = MIN_FRAMING_SIZE,
+      useBoundingSphere = false,
+      distanceScale = FIT_DISTANCE_SCALE,
+    } = {}
+  ) {
+    const center =
+      box && !box.isEmpty() ? box.getCenter(new THREE.Vector3()) : this.focusPoint.clone();
+    if (box && !box.isEmpty()) {
+      this.constructionCenter.copy(center);
+      this.focusPoint.copy(center);
+    }
     let dist = this.camera.position.distanceTo(this.controls.target);
     if (box && !box.isEmpty()) {
       const size = box.getSize(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z, MIN_FRAMING_SIZE);
-      const padded = maxDim * (1 + DEFAULT_FIT_MARGIN * 2);
+      const extentFloor = Math.max(0, Number(minFramingSize) || 0);
+      const maxDim = useBoundingSphere
+        ? Math.max(size.length(), extentFloor)
+        : Math.max(size.x, size.y, size.z, extentFloor);
+      const padded = maxDim * (1 + margin * 2);
+      const distanceFloor =
+        minDistance != null && Number.isFinite(minDistance)
+          ? Math.max(0, minDistance)
+          : MIN_CAMERA_DISTANCE;
       if (this.mode === "perspective") {
         const fov = (this.perspective.fov * Math.PI) / 180;
         const fitAspect = this._fitAspect || this.perspective.aspect || 1;
         const fitH = padded / (2 * Math.tan(fov / 2));
         const fitW = padded / (2 * Math.tan(fov / 2) * fitAspect);
-        dist = Math.max(fitH, fitW) * FIT_DISTANCE_SCALE;
+        dist = Math.max(fitH, fitW) * distanceScale;
       } else {
-        this.orthoSize = (padded / 2) * FIT_DISTANCE_SCALE;
+        this.orthoSize = (padded / 2) * distanceScale;
         this.#updateOrthoFrustum();
-        dist = Math.max(padded * 1.2, MIN_CAMERA_DISTANCE);
+        dist = Math.max(padded * 1.2, distanceFloor);
       }
-      dist = Math.max(dist, MIN_CAMERA_DISTANCE);
+      dist = Math.max(dist, distanceFloor);
     }
 
     const dirs = {
