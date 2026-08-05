@@ -194,6 +194,20 @@ const r = 1.2;
     "multiple spheres in one layer share the same layer step",
     multiSpherePointSteps.join(",")
   );
+  assert(
+    finalApplied.circleCenters.length === 0,
+    "volumetric layer plan omits circle overlays in applyConstructionPlan"
+  );
+  const traditionalPlan = buildTreeOfLifeConstructionPlan(r, { viewMode: "traditional" });
+  const traditionalApplied = applyConstructionPlan(
+    traditionalPlan,
+    traditionalPlan.operations.length - 1
+  );
+  assert(
+    traditionalApplied.circleCenters.length > 0,
+    "traditional construction plan still emits circle centers",
+    String(traditionalApplied.circleCenters.length)
+  );
 }
 
 // --- Generator + plan + engine totals stay aligned ---
@@ -339,6 +353,42 @@ try {
   assert(browserStats.zRange > 0.5, "browser Z range substantial", browserStats.zRange.toFixed(3));
   assert(browserStats.distinctLevels >= 3, "browser has 3+ Z levels", String(browserStats.distinctLevels));
   assert(browserStats.axisVisible, "XYZ axis helper visible in volumetric mode");
+
+  await page.click("#studyModeEnabled");
+  await sleep(600);
+  const axisInStudy = await page.evaluate(() => window.__volumetricTestHooks.isAxisHelperVisible());
+  assert(!axisInStudy, "XYZ axis helper hidden in Study Mode");
+
+  await page.click("#studyModeEnabled");
+  await sleep(600);
+  const axisAfterStudy = await page.evaluate(() => window.__volumetricTestHooks.isAxisHelperVisible());
+  assert(axisAfterStudy, "XYZ axis helper restored after leaving Study Mode");
+
+  await page.evaluate(() => window.__evolutionTestHooks.enableEvolutionMode());
+  await sleep(600);
+  const axisInEvolution = await page.evaluate(() => window.__volumetricTestHooks.isAxisHelperVisible());
+  assert(!axisInEvolution, "XYZ axis helper hidden in Evolution Mode");
+
+  await page.evaluate(() => {
+    const cb = document.getElementById("evolutionMode");
+    cb.checked = false;
+    cb.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await sleep(800);
+  const axisAfterEvolution = await page.evaluate(() => window.__volumetricTestHooks.isAxisHelperVisible());
+  assert(axisAfterEvolution, "XYZ axis helper restored after leaving Evolution Mode");
+
+  const constructionCircles = await page.evaluate(() => {
+    window.__volumetricTestHooks.enableCirclesLayer();
+    window.__volumetricTestHooks.enterConstructionMode();
+    return window.__volumetricTestHooks.getCircleCenterCount();
+  });
+  assert(
+    constructionCircles === 0,
+    "volumetric Construction Mode omits circle overlays with circles layer enabled",
+    String(constructionCircles)
+  );
+  await page.evaluate(() => window.__volumetricTestHooks.exitConstructionMode());
 
   const sphereRadiusUi = await page.evaluate(() => {
     const slider = document.getElementById("volumetricSphereRadius");

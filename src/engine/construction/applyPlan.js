@@ -21,6 +21,7 @@ export function applyConstructionPlan(plan, endIndex) {
 
   const end = Math.max(-1, Math.min(endIndex, plan.operations.length - 1));
   const useLayerSteps = plan.stepKind === "layer";
+  const omitCircleCenters = useLayerSteps;
 
   for (let i = 0; i <= end; i += 1) {
     const op = plan.operations[i];
@@ -59,14 +60,16 @@ export function applyConstructionPlan(plan, endIndex) {
         constructionStep,
         justification: op.justification,
       });
-      circleCenters.push({
-        id: `circle-${op.centerId}`,
-        pointId: op.centerId,
-        radius: op.radius,
-        normal: op.normal ?? [0, 0, 1],
-        constructionStep,
-        justification: op.justification,
-      });
+      if (!omitCircleCenters) {
+        circleCenters.push({
+          id: `circle-${op.centerId}`,
+          pointId: op.centerId,
+          radius: op.radius,
+          normal: op.normal ?? [0, 0, 1],
+          constructionStep,
+          justification: op.justification,
+        });
+      }
     }
     if (op.type === "addEdge" && pointById.has(op.from) && pointById.has(op.to)) {
       edges.push({

@@ -150,6 +150,7 @@ const ui = {
   volumetricLayers: 5,
   volumetricSphereRadiusRatio: 0.14,
   volumetricConnectionThickness: 1.2,
+  volumetricShowAxis: true,
   geometricFlags: {
     showTree: true,
     showConstructionGeometry: true,
@@ -503,6 +504,7 @@ function saveState() {
       volumetricLayers: ui.volumetricLayers,
       volumetricSphereRadiusRatio: ui.volumetricSphereRadiusRatio,
       volumetricConnectionThickness: ui.volumetricConnectionThickness,
+      volumetricShowAxis: ui.volumetricShowAxis,
       geometricFlags: ui.geometricFlags,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -907,6 +909,7 @@ function syncStudyVisibility() {
     floor.visible = !hideWorld;
     worldGrid.visible = !hideWorld;
   }
+  syncVolumetricAxisHelper();
 }
 const player = engine.player;
 
@@ -996,7 +999,11 @@ function syncEvolutionUI() {
   const playback = document.getElementById("evolutionPlayback");
   const state = evolution.getState();
   if (playback) playback.hidden = !ui.evolutionMode;
-  if (!ui.evolutionMode) return;
+  if (!ui.evolutionMode) {
+    syncVolumetricAxisHelper();
+    return;
+  }
+  syncVolumetricAxisHelper();
   document.getElementById("evoStepCurrent").textContent = String(state.stepIndex);
   document.getElementById("evoStepTotal").textContent = String(Math.max(0, state.totalSteps - 1));
   document.getElementById("evoTitle").textContent = state.title;
@@ -1523,12 +1530,26 @@ function syncTreeViewUI() {
   syncVolumetricUI();
 }
 
+function isVolumetricAxisHelperActive() {
+  return (
+    ui.geometry === "treeOfLife" &&
+    ui.treeViewMode === "volumetric" &&
+    ui.volumetricShowAxis &&
+    !studyController.isActive() &&
+    !ui.evolutionMode
+  );
+}
+
+function syncVolumetricAxisHelper() {
+  axisHelper.visible = isVolumetricAxisHelperActive();
+}
+
 function syncVolumetricUI() {
   normalizeVolumetricUiState();
   const group = document.getElementById("volumetricControls");
   const isVolumetric = ui.geometry === "treeOfLife" && ui.treeViewMode === "volumetric";
   if (group) group.hidden = !isVolumetric;
-  axisHelper.visible = isVolumetric;
+  syncVolumetricAxisHelper();
 
   const zEl = document.getElementById("volumetricZSpacing");
   const zVal = document.getElementById("volumetricZSpacingValue");
@@ -1540,6 +1561,7 @@ function syncVolumetricUI() {
   const sphereVal = document.getElementById("volumetricSphereRadiusValue");
   const thickEl = document.getElementById("volumetricConnectionThickness");
   const thickVal = document.getElementById("volumetricConnectionThicknessValue");
+  const axisEl = document.getElementById("volumetricShowAxis");
   const hint = document.getElementById("volumetricHint");
 
   if (zEl) zEl.value = String(ui.volumetricZSpacing);
@@ -1552,6 +1574,7 @@ function syncVolumetricUI() {
   if (sphereVal) sphereVal.textContent = ui.volumetricSphereRadiusRatio.toFixed(2);
   if (thickEl) thickEl.value = String(ui.volumetricConnectionThickness);
   if (thickVal) thickVal.textContent = ui.volumetricConnectionThickness.toFixed(2);
+  if (axisEl) axisEl.checked = ui.volumetricShowAxis;
   if (hint && isVolumetric) {
     const steps = countVolumetricConstructionSteps(
       buildVolumetricTreeLayout(ui.radius, {
@@ -1931,6 +1954,11 @@ function bindControls() {
   bindVolumetric("volumetricLayers", "volumetricLayers");
   bindVolumetric("volumetricSphereRadius", "volumetricSphereRadiusRatio");
   bindVolumetric("volumetricConnectionThickness", "volumetricConnectionThickness");
+  document.getElementById("volumetricShowAxis")?.addEventListener("change", (e) => {
+    ui.volumetricShowAxis = e.target.checked;
+    syncVolumetricAxisHelper();
+    saveState();
+  });
 
   const summaryBtn = document.getElementById("rendererSummary");
   summaryBtn?.addEventListener("click", (e) => {
@@ -3082,6 +3110,28 @@ window.__volumetricTestHooks = {
   getGeneratorSphereRadius: () => engine.getFullData()?.sphereCenters?.[0]?.radius ?? null,
   getConstructionRadius: () => engine.getVisibleData()?.sphereCenters?.[0]?.radius ?? null,
   isAxisHelperVisible: () => axisHelper.visible,
+  getCircleCenterCount: () =>
+    (engine.getVisibleData() ?? engine.getFullData())?.circleCenters?.length ?? 0,
+  enableCirclesLayer: () => {
+    ui.activeRenderLayers.add("circles");
+    syncDerivedRenderMode();
+    syncRendererLayerUI();
+    engine.setActiveRenderLayers(ui.activeRenderLayers);
+  },
+  enterConstructionMode: () => {
+    if (ui.constructionMode) return;
+    ui.constructionMode = true;
+    const cb = document.getElementById("constructionMode");
+    if (cb) cb.checked = true;
+    enterConstructionMode();
+  },
+  exitConstructionMode: () => {
+    if (!ui.constructionMode) return;
+    ui.constructionMode = false;
+    const cb = document.getElementById("constructionMode");
+    if (cb) cb.checked = false;
+    exitConstructionMode();
+  },
   measureProjectedSpan: () => {
     const data = engine.getFullData();
     const seph = data?.points?.filter((p) => p.meta?.role === "sephirah") ?? [];
