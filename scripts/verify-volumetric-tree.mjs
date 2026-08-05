@@ -189,6 +189,14 @@ const r = 1.2;
   assert(/value="volumetric"/.test(html), "volumetric option in tree view select");
   assert(/id="volumetricControls"/.test(html), "volumetric controls section");
   assert(/data-preset="perspective"/.test(html), "perspective camera preset button");
+  assert(
+    /id="volumetricSphereRadiusValue">0\.14</.test(html),
+    "sphere radius label default matches ratio slider"
+  );
+  assert(
+    /id="volumetricSphereRadius"[^>]*value="0\.14"/.test(html),
+    "sphere radius slider default is 0.14 ratio"
+  );
 }
 
 // --- UI normalization clamps out-of-range saved values ---
@@ -278,6 +286,31 @@ try {
   assert(browserStats.zRange > 0.5, "browser Z range substantial", browserStats.zRange.toFixed(3));
   assert(browserStats.distinctLevels >= 3, "browser has 3+ Z levels", String(browserStats.distinctLevels));
   assert(browserStats.axisVisible, "XYZ axis helper visible in volumetric mode");
+
+  const sphereRadiusUi = await page.evaluate(() => {
+    const slider = document.getElementById("volumetricSphereRadius");
+    const label = document.getElementById("volumetricSphereRadiusValue");
+    return {
+      slider: slider?.value ?? "",
+      label: label?.textContent ?? "",
+      ratio: window.__volumetricTestHooks?.getSphereRadiusRatio?.() ?? null,
+      generatorRadius: window.__volumetricTestHooks?.getGeneratorSphereRadius?.() ?? null,
+      constructionRadius: window.__volumetricTestHooks?.getConstructionRadius?.() ?? null,
+    };
+  });
+  assert(sphereRadiusUi.slider === "0.14", "browser sphere radius slider is ratio 0.14", sphereRadiusUi.slider);
+  assert(sphereRadiusUi.label === "0.14", "browser sphere radius label matches slider", sphereRadiusUi.label);
+  assert(sphereRadiusUi.ratio === 0.14, "ui state sphere radius ratio is 0.14", String(sphereRadiusUi.ratio));
+  assert(
+    Math.abs(sphereRadiusUi.generatorRadius - 1.2 * 0.14) < 0.001,
+    "generator sphere radius uses ratio * construction radius",
+    String(sphereRadiusUi.generatorRadius)
+  );
+  assert(
+    Math.abs(sphereRadiusUi.constructionRadius - sphereRadiusUi.generatorRadius) < 0.001,
+    "rendered construction radius matches generator",
+    `${sphereRadiusUi.constructionRadius} vs ${sphereRadiusUi.generatorRadius}`
+  );
 
   const stepTotals = await page.evaluate(() => {
     const max = window.__volumetricTestHooks?.getMaxStep?.() ?? 0;

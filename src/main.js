@@ -1548,7 +1548,7 @@ function syncVolumetricUI() {
   if (layersEl) layersEl.value = String(ui.volumetricLayers);
   if (layersVal) layersVal.textContent = String(ui.volumetricLayers);
   if (sphereEl) sphereEl.value = String(ui.volumetricSphereRadiusRatio);
-  if (sphereVal) sphereVal.textContent = (ui.radius * ui.volumetricSphereRadiusRatio).toFixed(2);
+  if (sphereVal) sphereVal.textContent = ui.volumetricSphereRadiusRatio.toFixed(2);
   if (thickEl) thickEl.value = String(ui.volumetricConnectionThickness);
   if (thickVal) thickVal.textContent = ui.volumetricConnectionThickness.toFixed(2);
   if (hint && isVolumetric) {
@@ -3071,6 +3071,9 @@ window.__volumetricTestHooks = {
   getConstructionData: () => engine.getFullData(),
   getMaxStep: () => engine.getMaxStep(),
   getPlayerTotalSteps: () => player.getState().totalSteps,
+  getSphereRadiusRatio: () => ui.volumetricSphereRadiusRatio,
+  getGeneratorSphereRadius: () => engine.getFullData()?.sphereCenters?.[0]?.radius ?? null,
+  getConstructionRadius: () => engine.getVisibleData()?.sphereCenters?.[0]?.radius ?? null,
   isAxisHelperVisible: () => axisHelper.visible,
   measureProjectedSpan: () => {
     const data = engine.getFullData();
