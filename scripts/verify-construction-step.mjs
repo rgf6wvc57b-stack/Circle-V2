@@ -142,6 +142,14 @@ assert(
   !/displayStep \|\|/.test(mainSrc) || /displayStep \?\?/.test(mainSrc),
   "syncDiscovery uses nullish coalescing for player display step"
 );
+assert(
+  /savedWantedConstructionMode/.test(mainSrc),
+  "startup normalizes saved Construction Mode instead of leaving UI/engine out of sync"
+);
+assert(
+  /ui\.constructionMode = false/.test(mainSrc),
+  "cold startup forces static display mode"
+);
 
 // --- Engine + clamp stay aligned for static stepping ---
 {
@@ -676,6 +684,81 @@ try {
     constructionAtZero.sliderValue === `0 / ${constructionAtZero.maxStep}`,
     "construction slider label shows 0 / total",
     constructionAtZero.sliderValue
+  );
+
+  const savedConstructionModePage = await browser.newPage();
+  await savedConstructionModePage.evaluateOnNewDocument(() => {
+    localStorage.clear();
+    localStorage.setItem("geometry-explor:show-intro-on-open", "0");
+    localStorage.setItem(
+      "geometryExplorState_v1",
+      JSON.stringify({
+        geometry: "flowerOfLife",
+        constructionMode: true,
+        constructionStep: 5,
+        activeRenderLayers: ["spheres"],
+        radius: 1.2,
+      })
+    );
+  });
+  await savedConstructionModePage.goto(base, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await sleep(1200);
+
+  const savedConstructionMode = await savedConstructionModePage.evaluate(() => ({
+    uiConstructionMode: window.__constructionTestHooks.isConstructionMode(),
+    engineConstructionMode: window.__constructionTestHooks.isEngineConstructionMode(),
+    checkbox: window.__constructionTestHooks.getConstructionModeCheckbox(),
+    uiStep: window.__constructionTestHooks.getUiConstructionStep(),
+    engineStep: window.__constructionTestHooks.getEngineStep(),
+    maxStep: window.__constructionTestHooks.getMaxConstructionStep(),
+    visibleSpheres: window.__constructionTestHooks.getVisibleSphereCount(),
+    fullSpheres: window.__constructionTestHooks.getFullSphereCount(),
+    label: window.__constructionTestHooks.getLayersLabel(),
+    stepCurrent: window.__constructionTestHooks.getStepCurrent(),
+    stepTotal: window.__constructionTestHooks.getStepTotal(),
+    playerPhase: window.__constructionTestHooks.getPlayerPhase(),
+    expectedPartialVisible: window.__constructionTestHooks.countExpectedVisibleSpheres(5),
+  }));
+
+  await savedConstructionModePage.close();
+
+  assert(!savedConstructionMode.uiConstructionMode, "saved constructionMode true is cleared on startup");
+  assert(!savedConstructionMode.engineConstructionMode, "engine is not in construction mode after startup");
+  assert(!savedConstructionMode.checkbox, "construction mode checkbox is unchecked after startup");
+  assert(
+    savedConstructionMode.uiStep === savedConstructionMode.maxStep,
+    "saved partial construction step upgrades to full static geometry",
+    `${savedConstructionMode.uiStep} vs ${savedConstructionMode.maxStep}`
+  );
+  assert(
+    savedConstructionMode.engineStep === savedConstructionMode.maxStep,
+    "engine step matches full geometry after saved construction mode startup",
+    `${savedConstructionMode.engineStep} vs ${savedConstructionMode.maxStep}`
+  );
+  assert(
+    savedConstructionMode.visibleSpheres === savedConstructionMode.fullSpheres,
+    "rendered geometry is complete, not the saved partial step",
+    `${savedConstructionMode.visibleSpheres} vs partial ${savedConstructionMode.expectedPartialVisible}`
+  );
+  assert(
+    savedConstructionMode.label === `${savedConstructionMode.maxStep} / ${savedConstructionMode.maxStep}`,
+    "layers label shows full step after saved construction mode startup",
+    savedConstructionMode.label
+  );
+  assert(
+    savedConstructionMode.stepCurrent === String(savedConstructionMode.maxStep),
+    "stepCurrent matches static full geometry",
+    savedConstructionMode.stepCurrent
+  );
+  assert(
+    savedConstructionMode.stepTotal === String(savedConstructionMode.maxStep),
+    "stepTotal matches max step",
+    savedConstructionMode.stepTotal
+  );
+  assert(
+    savedConstructionMode.playerPhase === "idle",
+    "player is idle static state, not mid-construction playback",
+    savedConstructionMode.playerPhase
   );
 
   await browser.close();

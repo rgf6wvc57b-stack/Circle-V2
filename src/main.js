@@ -1462,6 +1462,8 @@ function syncStepDisplay() {
 function syncConstructionUI() {
   const playback = document.getElementById("constructionPlayback");
   const legacy = document.getElementById("legacyStepGroup");
+  const constructionModeCb = document.getElementById("constructionMode");
+  if (constructionModeCb) constructionModeCb.checked = ui.constructionMode;
   if (playback) playback.hidden = !ui.constructionMode || ui.evolutionMode;
   if (legacy) legacy.hidden = ui.constructionMode || ui.evolutionMode;
   syncStepDisplay();
@@ -2729,7 +2731,11 @@ engine.regenerate();
 engine.setActiveRenderLayers(ui.activeRenderLayers);
 applyAppearance();
 
-// Show the complete geometry when Construction Mode is off (fresh startup or legacy full-step).
+// Cold startup always displays static geometry. Saved Construction Mode sessions are
+// not resumed automatically — show complete geometry instead of a partial static model.
+const savedWantedConstructionMode = Boolean(stateLoaded && ui.constructionMode);
+ui.constructionMode = false;
+
 const maxStep = engine.getMaxStep();
 const legacyFullStep =
   ui.pendingLegacyFullConstructionStep ||
@@ -2739,10 +2745,13 @@ ui.constructionStep = resolveStartupConstructionStep({
   step: ui.constructionStep,
   maxStep,
   stateLoaded,
-  constructionMode: ui.constructionMode,
+  constructionMode: false,
   legacyFullStep,
   constructionStepAbsent: ui.constructionStepAbsent,
 });
+if (savedWantedConstructionMode) {
+  ui.constructionStep = maxStep;
+}
 ui.constructionStepAbsent = false;
 ui.pendingLegacyFullConstructionStep = false;
 if (legacyFullStep) {
@@ -3089,6 +3098,9 @@ window.__constructionTestHooks = {
   hadPendingLegacyFullConstructionStep: () => ui.pendingLegacyFullConstructionStep,
   hadConstructionStepAbsent: () => ui.constructionStepAbsent,
   isConstructionMode: () => ui.constructionMode,
+  isEngineConstructionMode: () => engine.isConstructionMode(),
+  getConstructionModeCheckbox: () => document.getElementById("constructionMode")?.checked ?? false,
+  getPlayerPhase: () => player.getState().phase,
   getGeometryId: () => ui.geometry,
   getFullSphereCount: () => engine.getFullData()?.sphereCenters?.length ?? 0,
   applyStaticStep: (step) => showStaticStep(step, { reframe: false }),
