@@ -2,8 +2,8 @@
  * Volumetric 3D Tree of Life verification.
  * Run: node scripts/verify-volumetric-tree.mjs
  */
-import { readFileSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync, mkdirSync, accessSync, constants } from "node:fs";
+import { dirname, join, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
@@ -23,6 +23,18 @@ import { SEPHIROT_IDS } from "../src/engine/treeOfLife/graph.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
 let failed = 0;
+
+/**
+ * Screenshot output directory — configurable for CI and local runs.
+ * Priority: GEOMETRY_EXPLOR_SCREENSHOT_DIR env → repo test-output/screenshots.
+ */
+function resolveScreenshotDir() {
+  const configured = process.env.GEOMETRY_EXPLOR_SCREENSHOT_DIR?.trim();
+  if (configured) {
+    return isAbsolute(configured) ? configured : resolve(root, configured);
+  }
+  return join(root, "test-output", "screenshots");
+}
 
 function assert(condition, message, detail = "") {
   if (condition) console.log("PASS:", message, detail ? `— ${detail}` : "");
@@ -232,6 +244,16 @@ const r = 1.2;
   assert(invalid.connectionThickness === defaults.connectionThickness, "invalid connectionThickness uses default");
 }
 
+// --- Screenshot output directory is portable (not Cursor-specific) ---
+{
+  const screenshotDir = resolveScreenshotDir();
+  assert(!screenshotDir.startsWith("/opt/cursor/"), "screenshot dir is not Cursor-specific", screenshotDir);
+  assert(screenshotDir.includes("screenshots"), "screenshot dir name includes screenshots", screenshotDir);
+  mkdirSync(screenshotDir, { recursive: true });
+  accessSync(screenshotDir, constants.W_OK);
+  assert(true, "screenshot dir is writable", screenshotDir);
+}
+
 await run("npm", ["run", "build"]);
 
 const port = "4312";
@@ -242,7 +264,7 @@ const preview = spawn(
   { cwd: root, stdio: ["ignore", "pipe", "pipe"] }
 );
 
-const screenshotDir = "/opt/cursor/artifacts/screenshots";
+const screenshotDir = resolveScreenshotDir();
 mkdirSync(screenshotDir, { recursive: true });
 
 try {

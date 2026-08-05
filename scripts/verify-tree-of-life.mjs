@@ -15,6 +15,8 @@ import {
 import { traditionalPaths } from "../src/engine/treeOfLife/layout.js";
 import { spatialZStats } from "../src/engine/treeOfLife/spatialLayout.js";
 import { volumetricZStats } from "../src/engine/treeOfLife/volumetricLayout.js";
+import { buildGeometricTreeLayout } from "../src/engine/treeOfLife/geometricLayout.js";
+import { intersectCirclesEqualRadius } from "../src/engine/construction/compass.js";
 import { RENDER_MODES } from "../src/engine/renderer/GeometryRenderer.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -179,6 +181,46 @@ assert(
   geometric.edges.some((e) => e.meta?.kind === "symmetryAxis"),
   "Geometric includes symmetry axes"
 );
+
+// --- XY-plane circle intersections ignore Z separation ---
+{
+  const circleR = 1.2;
+  const c0 = { x: 0, y: 0, z: 0 };
+  const c1 = { x: 1.5, y: 0, z: 10 };
+  const hits = intersectCirclesEqualRadius(c0, c1, circleR);
+  assert(hits.length === 2, "Z-separated centers still intersect in XY plane", String(hits.length));
+  assert(
+    hits.every((h) => Math.abs(h.z - 5) < 1e-9),
+    "intersection Z is average of parent centers",
+    hits.map((h) => h.z).join(",")
+  );
+
+  const layout = buildGeometricTreeLayout(r, {
+    flags: { showIntersections: true, showConstructionGeometry: true },
+  });
+  const sephirot = layout.sephirot;
+  const cr = layout.constructionRadius;
+  let xyEligible = 0;
+  for (let i = 0; i < sephirot.length; i += 1) {
+    for (let j = i + 1; j < sephirot.length; j += 1) {
+      const a = sephirot[i];
+      const b = sephirot[j];
+      const dxy = Math.hypot(a.x - b.x, a.y - b.y);
+      const d3 = Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+      if (dxy <= 2 * cr + 1e-10 && d3 > 2 * cr + 1e-10) xyEligible += 1;
+    }
+  }
+  assert(xyEligible >= 1, "geometric layout has pairs separated only by Z depth");
+  assert(
+    layout.intersections.length >= xyEligible,
+    "geometric intersections include Z-suppressed XY pairs",
+    `${layout.intersections.length} vs ${xyEligible} eligible`
+  );
+  assert(
+    layout.intersections.every((ix) => Math.abs(ix.z) > 1e-6),
+    "geometric intersection points carry parent Z depth"
+  );
+}
 
 // Flower overlay optional — off by default, on when flagged
 const withFlower = generateTreeOfLife(r, {

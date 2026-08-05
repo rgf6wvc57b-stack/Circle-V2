@@ -118,7 +118,7 @@ export function buildGeometricTreeLayout(radius, opts = {}) {
             id: `ix-${a.id}-${b.id}-${k}`,
             x: h.x,
             y: h.y,
-            z: (a.z + b.z) / 2,
+            z: h.z,
             label: "",
             role: "intersection",
             parents: [a.id, b.id],
