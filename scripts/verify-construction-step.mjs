@@ -10,11 +10,14 @@ import { createRequire } from "node:module";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   clampConstructionStep,
+  countVisibleSpheresAtStep,
   formatConstructionStepLabel,
   isInvalidConstructionStep,
   isLegacyFullConstructionStep,
   resolveConstructionStep,
-} from "../src/app/constructionStep.js";
+} from "../src/engine/construction/constructionStep.js";
+import { ConstructionSystem, buildConstructionPlan } from "../src/engine/construction/ConstructionSystem.js";
+import { generateGeometry } from "../src/engine/generators/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
@@ -55,6 +58,50 @@ assert(
     /isLegacyFullConstructionStep\(savedStep\)/.test(mainSrc),
   "main.js only rehydrates MAX_SAFE_INTEGER for legacy saved state"
 );
+assert(!/ui\.constructionStep \|\|/.test(mainSrc), "no truthy fallback on constructionStep");
+assert(
+  !/setStep\(Math\.max\(1,\s*ui\.constructionStep/.test(mainSrc),
+  "showStaticStep does not coerce step 0 to max via truthy fallback"
+);
+
+// --- Engine + clamp stay aligned for static stepping ---
+{
+  const data = generateGeometry("flowerOfLife", 1.2);
+  const plan = buildConstructionPlan("flowerOfLife", 1.2);
+  const sys = new ConstructionSystem();
+  sys.setConstructionData(data, { plan });
+  const max = sys.getMaxStep();
+
+  const assertStepSync = (input, expectedStep) => {
+    sys.setStep(input);
+    assert(sys.getStep() === expectedStep, `engine step for input ${String(input)}`, String(sys.getStep()));
+    assert(
+      clampConstructionStep(input, max) === expectedStep,
+      `clamped step for input ${String(input)}`,
+      String(clampConstructionStep(input, max))
+    );
+    const visible = sys.getVisibleData().sphereCenters.length;
+    const expectedVisible = countVisibleSpheresAtStep(data, expectedStep);
+    assert(
+      visible === expectedVisible,
+      `visible spheres at step ${expectedStep}`,
+      `${visible} vs ${expectedVisible}`
+    );
+  };
+
+  assertStepSync(0, 0);
+  assertStepSync(1, 1);
+  assertStepSync(max, max);
+  assertStepSync(-3, 0);
+  assertStepSync(Number.NaN, max);
+  assertStepSync(SENTINEL, max);
+  assert(countVisibleSpheresAtStep(data, 0) === 0, "step 0 shows no spheres");
+  assert(countVisibleSpheresAtStep(data, 1) === 1, "step 1 shows one sphere");
+  assert(
+    countVisibleSpheresAtStep(data, max) === data.sphereCenters.length,
+    "max step shows all spheres"
+  );
+}
 
 await run("npm", ["run", "build"]);
 
@@ -127,6 +174,92 @@ try {
   assert(afterModeChange.step <= 10, "tree mode change resets step", String(afterModeChange.step));
   assert(!afterModeChange.label.includes(SENTINEL_STR), "mode change label has no sentinel");
 
+  await page.select("#geometry", "flowerOfLife");
+  await sleep(500);
+
+  const staticStepCases = [0, 1, -4, 99];
+
+  for (const input of staticStepCases) {
+    const sync = await page.evaluate((rawStep) => {
+      const max = window.__constructionTestHooks.getMaxConstructionStep();
+      const expected = window.__constructionTestHooks.resolveConstructionStep(rawStep);
+      window.__constructionTestHooks.applyStaticStep(rawStep);
+      return {
+        expected,
+        ui: window.__constructionTestHooks.getUiConstructionStep(),
+        engine: window.__constructionTestHooks.getEngineStep(),
+        visible: window.__constructionTestHooks.getVisibleSphereCount(),
+        expectedVisible: window.__constructionTestHooks.countExpectedVisibleSpheres(rawStep),
+        label: window.__constructionTestHooks.getLayersLabel(),
+        slider: window.__constructionTestHooks.getSliderValue(),
+        max,
+      };
+    }, input);
+
+    assert(sync.ui === sync.expected, `ui step matches for input ${input}`, `${sync.ui} vs ${sync.expected}`);
+    assert(sync.engine === sync.expected, `engine step matches for input ${input}`, `${sync.engine} vs ${sync.expected}`);
+    assert(
+      sync.label === `${sync.expected} / ${sync.max}`,
+      `label matches for input ${input}`,
+      sync.label
+    );
+    assert(
+      sync.slider === String(sync.expected),
+      `slider matches for input ${input}`,
+      `${sync.slider} vs ${sync.expected}`
+    );
+    assert(
+      sync.visible === sync.expectedVisible,
+      `visible spheres match for input ${input}`,
+      `${sync.visible} vs ${sync.expectedVisible}`
+    );
+  }
+
+  const maxSync = await page.evaluate(() => {
+    const max = window.__constructionTestHooks.getMaxConstructionStep();
+    window.__constructionTestHooks.applyStaticStep(max);
+    return {
+      expected: max,
+      ui: window.__constructionTestHooks.getUiConstructionStep(),
+      engine: window.__constructionTestHooks.getEngineStep(),
+      visible: window.__constructionTestHooks.getVisibleSphereCount(),
+      expectedVisible: window.__constructionTestHooks.countExpectedVisibleSpheres(max),
+      label: window.__constructionTestHooks.getLayersLabel(),
+      slider: window.__constructionTestHooks.getSliderValue(),
+      max,
+    };
+  });
+  assert(maxSync.ui === maxSync.expected, "max ui step matches", String(maxSync.ui));
+  assert(maxSync.engine === maxSync.expected, "max engine step matches", String(maxSync.engine));
+  assert(maxSync.visible === maxSync.expectedVisible, "max visible spheres match", `${maxSync.visible} vs ${maxSync.expectedVisible}`);
+
+  const nonFiniteSync = await page.evaluate(() => {
+    window.__constructionTestHooks.applyStaticStep(Number.NaN);
+    const max = window.__constructionTestHooks.getMaxConstructionStep();
+    const expected = window.__constructionTestHooks.resolveConstructionStep(Number.NaN);
+    return {
+      expected,
+      ui: window.__constructionTestHooks.getUiConstructionStep(),
+      engine: window.__constructionTestHooks.getEngineStep(),
+      visible: window.__constructionTestHooks.getVisibleSphereCount(),
+      expectedVisible: window.__constructionTestHooks.countExpectedVisibleSpheres(Number.NaN),
+      label: window.__constructionTestHooks.getLayersLabel(),
+      max,
+    };
+  });
+  assert(nonFiniteSync.ui === nonFiniteSync.expected, "non-finite ui step resolves to max", String(nonFiniteSync.ui));
+  assert(nonFiniteSync.engine === nonFiniteSync.expected, "non-finite engine step resolves to max", String(nonFiniteSync.engine));
+  assert(
+    nonFiniteSync.visible === nonFiniteSync.expectedVisible,
+    "non-finite step shows full geometry",
+    `${nonFiniteSync.visible} vs ${nonFiniteSync.expectedVisible}`
+  );
+  assert(
+    nonFiniteSync.label === `${nonFiniteSync.expected} / ${nonFiniteSync.max}`,
+    "non-finite label shows max",
+    nonFiniteSync.label
+  );
+
   const evolutionOk = await page.evaluate(async () => {
     try {
       window.__evolutionTestHooks.enableEvolutionMode();
@@ -166,6 +299,8 @@ try {
       sliderValue: document.getElementById("layers")?.value ?? "",
       sliderMax: document.getElementById("layers")?.max ?? "",
       uiStep: window.__constructionTestHooks?.getUiConstructionStep?.(),
+      engineStep: window.__constructionTestHooks?.getEngineStep?.(),
+      visible: window.__constructionTestHooks?.getVisibleSphereCount?.(),
       saved: localStorage.getItem(key),
       hasSentinelInSaved: localStorage.getItem(key)?.includes(sentinelStr) ?? false,
     };
@@ -184,6 +319,16 @@ try {
     legacyUpgrade.layersValue === `${legacyUpgrade.sliderMax} / ${legacyUpgrade.sliderMax}`,
     "legacy sentinel shows full current / total",
     legacyUpgrade.layersValue
+  );
+  assert(
+    Number(legacyUpgrade.uiStep) === Number(legacyUpgrade.engineStep),
+    "legacy sentinel ui and engine steps match",
+    `${legacyUpgrade.uiStep} vs ${legacyUpgrade.engineStep}`
+  );
+  assert(
+    Number(legacyUpgrade.visible) === Number(legacyUpgrade.sliderMax),
+    "legacy sentinel renders full geometry",
+    String(legacyUpgrade.visible)
   );
 
   await browser.close();

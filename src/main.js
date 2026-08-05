@@ -96,6 +96,7 @@ import {
   isInvalidConstructionStep,
   isLegacyFullConstructionStep,
   resolveConstructionStep,
+  countVisibleSpheresAtStep,
 } from "./app/constructionStep.js";
 const canvas = document.getElementById("viewport");
 const appRoot = document.getElementById("app");
@@ -1340,6 +1341,7 @@ function resetConstructionStep({ toMax = false } = {}) {
   ui.constructionStep = clampConstructionStep(toMax ? max : 1, max);
   const layers = document.getElementById("layers");
   if (layers) {
+    layers.min = "0";
     layers.max = String(Math.max(0, max));
     layers.value = String(ui.constructionStep);
   }
@@ -1414,6 +1416,7 @@ function syncStepDisplay() {
   document.getElementById("stepTotal").textContent = String(total);
 
   const slider = document.getElementById("layers");
+  slider.min = "0";
   slider.max = String(Math.max(0, total));
   slider.value = String(current);
   if (!ui.constructionMode) {
@@ -1451,7 +1454,7 @@ function showStaticStep(step, { reframe = true } = {}) {
   engine.setConstructionMode(false);
   const max = getMaxConstructionStep();
   ui.constructionStep = clampConstructionStep(step, max);
-  engine.setStep(Math.max(1, ui.constructionStep || max || 1));
+  engine.setStep(ui.constructionStep);
   applyAppearance();
   const visible = engine.getVisibleData();
   engine.clearDrawProgress();
@@ -1460,6 +1463,8 @@ function showStaticStep(step, { reframe = true } = {}) {
   visible?.points.forEach((p) => engine.setDrawProgress(p.id, 1));
   engine.setActiveId(null);
   engine.redraw();
+  syncLabels();
+  syncStepDisplay();
   syncDisplayOverlays();
   if (reframe) frameActiveConstruction({ expandOnly: true });
 }
@@ -2695,6 +2700,7 @@ if (hadLegacyFullConstructionStep) {
 
 const layersSlider = document.getElementById("layers");
 if (layersSlider) {
+  layersSlider.min = "0";
   layersSlider.max = String(maxStep);
   layersSlider.value = String(ui.constructionStep);
 }
@@ -3029,6 +3035,15 @@ window.__studyTestHooks = {
 window.__constructionTestHooks = {
   getUiConstructionStep: () => ui.constructionStep,
   hadPendingLegacyFullConstructionStep: () => ui.pendingLegacyFullConstructionStep,
+  applyStaticStep: (step) => showStaticStep(step, { reframe: false }),
+  getEngineStep: () => engine.getStep(),
+  getVisibleSphereCount: () => engine.getVisibleData()?.sphereCenters?.length ?? 0,
+  getLayersLabel: () => document.getElementById("layersValue")?.textContent ?? "",
+  getSliderValue: () => document.getElementById("layers")?.value ?? "",
+  getMaxConstructionStep: () => getMaxConstructionStep(),
+  resolveConstructionStep: (step) => resolveConstructionStep(step, getMaxConstructionStep()),
+  countExpectedVisibleSpheres: (step) =>
+    countVisibleSpheresAtStep(engine.getFullData(), step),
   selectTreeMode: async (mode) => {
     const geo = document.getElementById("geometry");
     if (geo.value !== "treeOfLife") {

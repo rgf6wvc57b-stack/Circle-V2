@@ -1,4 +1,5 @@
 import { applyConstructionPlan, buildConstructionPlan } from "./plans.js";
+import { clampConstructionStep } from "./constructionStep.js";
 
 /**
  * Construction System — sequential geometric construction from plans.
@@ -17,9 +18,10 @@ export class ConstructionSystem {
   setConstructionData(data, { plan = null } = {}) {
     this.fullData = data;
     this.plan = plan;
-    const max = plan?.sphereCount ?? data.maxStep;
-    this.step = Math.min(Math.max(1, this.step), max);
-    this.operationCursor = plan ? plan.operationIndexForSphereCount(this.step) : -1;
+    const max = plan?.sphereCount ?? data.maxStep ?? 0;
+    this.step = clampConstructionStep(this.step, max);
+    this.operationCursor =
+      plan && this.step > 0 ? plan.operationIndexForSphereCount(this.step) : -1;
   }
 
   setConstructionMode(enabled) {
@@ -28,10 +30,11 @@ export class ConstructionSystem {
 
   setStep(step) {
     if (!this.fullData) return;
-    const max = this.plan?.sphereCount ?? this.fullData.maxStep;
-    this.step = Math.max(1, Math.min(max, Math.round(step)));
+    const max = this.plan?.sphereCount ?? this.fullData.maxStep ?? 0;
+    this.step = clampConstructionStep(step, max);
     if (this.plan) {
-      this.operationCursor = this.plan.operationIndexForSphereCount(this.step);
+      this.operationCursor =
+        this.step > 0 ? this.plan.operationIndexForSphereCount(this.step) : -1;
     }
   }
 
