@@ -12,6 +12,7 @@ import { generateTreeOfLife } from "../src/engine/generators/index.js";
 import { buildTreeOfLifeConstructionPlan } from "../src/engine/construction/treeOfLifePlan.js";
 import {
   buildVolumetricTreeLayout,
+  normalizeVolumetricOpts,
   volumetricZStats,
 } from "../src/engine/treeOfLife/volumetricLayout.js";
 import { TREE_VIEW_MODES } from "../src/engine/treeOfLife/modes.js";
@@ -110,6 +111,22 @@ const r = 1.2;
   assert(/data-preset="perspective"/.test(html), "perspective camera preset button");
 }
 
+// --- UI normalization clamps out-of-range saved values ---
+{
+  const clamped = normalizeVolumetricOpts({
+    zSpacing: 99,
+    branchSpread: -1,
+    layers: 1,
+    sphereRadiusRatio: 0.01,
+    connectionThickness: 9,
+  });
+  assert(clamped.zSpacing === 1.2, "zSpacing clamped to max");
+  assert(clamped.branchSpread === 0.45, "branchSpread clamped to min");
+  assert(clamped.layers === 3, "layers clamped to minimum of 3");
+  assert(clamped.sphereRadiusRatio === 0.06, "sphereRadiusRatio clamped to min");
+  assert(clamped.connectionThickness === 2.5, "connectionThickness clamped to max");
+}
+
 await run("npm", ["run", "build"]);
 
 const port = "4312";
@@ -150,8 +167,6 @@ try {
     const seph = data?.points?.filter((p) => p.meta?.role === "sephirah") ?? [];
     const z = seph.map((p) => p.z);
     const distinct = [...new Set(z.map((v) => Math.round(v * 1000) / 1000))];
-    const axisVisible = Boolean(document.querySelector('[name="volumetricAxisHelper"]') ||
-      window.__volumetricTestHooks?.isAxisHelperVisible?.());
     return {
       zRange: Math.max(...z) - Math.min(...z),
       distinctLevels: distinct.length,

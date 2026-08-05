@@ -85,6 +85,7 @@ import {
   clearStudyPosterInsets,
   computeStudyViewLayout,
 } from "./studies/studyLayout.js";
+import { normalizeVolumetricOpts } from "./engine/treeOfLife/volumetricLayout.js";
 const canvas = document.getElementById("viewport");
 const appRoot = document.getElementById("app");
 
@@ -537,6 +538,7 @@ function loadState() {
     }
 
     Object.assign(ui, state);
+    normalizeVolumetricUiState();
     return true;
   } catch (error) {
     console.warn("Failed to load state. Defaults will be used.", error);
@@ -1410,6 +1412,21 @@ function exitConstructionMode() {
   syncLabels();
 }
 
+function normalizeVolumetricUiState() {
+  const norm = normalizeVolumetricOpts({
+    zSpacing: ui.volumetricZSpacing,
+    branchSpread: ui.volumetricBranchSpread,
+    layers: ui.volumetricLayers,
+    sphereRadiusRatio: ui.volumetricSphereRadiusRatio,
+    connectionThickness: ui.volumetricConnectionThickness,
+  });
+  ui.volumetricZSpacing = norm.zSpacing;
+  ui.volumetricBranchSpread = norm.branchSpread;
+  ui.volumetricLayers = norm.layers;
+  ui.volumetricSphereRadiusRatio = norm.sphereRadiusRatio;
+  ui.volumetricConnectionThickness = norm.connectionThickness;
+}
+
 function syncTreeViewUI() {
   const group = document.getElementById("treeViewModeGroup");
   const select = document.getElementById("treeViewMode");
@@ -1424,6 +1441,7 @@ function syncTreeViewUI() {
 }
 
 function syncVolumetricUI() {
+  normalizeVolumetricUiState();
   const group = document.getElementById("volumetricControls");
   const isVolumetric = ui.geometry === "treeOfLife" && ui.treeViewMode === "volumetric";
   if (group) group.hidden = !isVolumetric;
@@ -1774,11 +1792,6 @@ function bindControls() {
     else if (ui.treeViewMode === "volumetric") {
       ui.pathThickness = ui.volumetricConnectionThickness;
     } else ui.pathThickness = 1.1;
-    if (ui.treeViewMode === "volumetric" && !ui.userPickedRenderer) {
-      ui.activeRenderLayers = new Set(preferredRenderLayersForTree("volumetric"));
-      syncDerivedRenderMode();
-      syncRendererLayerUI();
-    }
     patchRenderLayerStyle(ui.renderLayerStyles, "connections", {
       thickness: ui.pathThickness,
     });
@@ -1804,18 +1817,15 @@ function bindControls() {
   bindGeoFlag("geoShowIntersections", "showIntersections");
   bindGeoFlag("geoShowSymmetry", "showSymmetryAxes");
 
-  const bindVolumetric = (id, key, { parse = Number, min, max, roundInt = false } = {}) => {
+  const bindVolumetric = (id, key) => {
     document.getElementById(id)?.addEventListener("input", (e) => {
-      let v = parse(e.target.value);
-      if (roundInt) v = Math.round(v);
-      if (typeof min === "number") v = Math.max(min, v);
-      if (typeof max === "number") v = Math.min(max, v);
-      ui[key] = v;
+      ui[key] = Number(e.target.value);
+      normalizeVolumetricUiState();
       if (key === "volumetricConnectionThickness") {
-        ui.pathThickness = v;
-        patchRenderLayerStyle(ui.renderLayerStyles, "connections", { thickness: v });
+        ui.pathThickness = ui.volumetricConnectionThickness;
+        patchRenderLayerStyle(ui.renderLayerStyles, "connections", { thickness: ui.pathThickness });
         const pathEl = document.getElementById("pathThickness");
-        if (pathEl) pathEl.value = String(v);
+        if (pathEl) pathEl.value = String(ui.pathThickness);
         syncRenderLayerStyleUI();
       }
       syncVolumetricUI();
@@ -1825,11 +1835,11 @@ function bindControls() {
       saveState();
     });
   };
-  bindVolumetric("volumetricZSpacing", "volumetricZSpacing", { min: 0.15, max: 1.2 });
-  bindVolumetric("volumetricBranchSpread", "volumetricBranchSpread", { min: 0.45, max: 2 });
-  bindVolumetric("volumetricLayers", "volumetricLayers", { min: 3, max: 8, roundInt: true });
-  bindVolumetric("volumetricSphereRadius", "volumetricSphereRadiusRatio", { min: 0.06, max: 0.35 });
-  bindVolumetric("volumetricConnectionThickness", "volumetricConnectionThickness", { min: 0.3, max: 2.5 });
+  bindVolumetric("volumetricZSpacing", "volumetricZSpacing");
+  bindVolumetric("volumetricBranchSpread", "volumetricBranchSpread");
+  bindVolumetric("volumetricLayers", "volumetricLayers");
+  bindVolumetric("volumetricSphereRadius", "volumetricSphereRadiusRatio");
+  bindVolumetric("volumetricConnectionThickness", "volumetricConnectionThickness");
 
   const summaryBtn = document.getElementById("rendererSummary");
   summaryBtn?.addEventListener("click", (e) => {

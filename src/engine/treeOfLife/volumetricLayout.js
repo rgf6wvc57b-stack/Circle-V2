@@ -84,10 +84,7 @@ export function buildVolumetricTreeLayout(radius, opts = {}) {
     layerGroups[idx].push(s);
   });
 
-  const sphereRadius =
-    typeof opts.sphereRadius === "number" && opts.sphereRadius > 0
-      ? opts.sphereRadius
-      : radius * vol.sphereRadiusRatio;
+  const sphereRadius = radius * vol.sphereRadiusRatio;
 
   return {
     variant: planar.variant,
