@@ -25,17 +25,26 @@ export const RENDER_LAYER_DRAW_ORDER = Object.freeze([
 /** Default appearance: Solid Spheres only. */
 export const DEFAULT_ACTIVE_RENDER_LAYERS = Object.freeze([RENDER_LAYERS.spheres]);
 
-/** Layers that render visible Volumetric Tree geometry (no circle overlays). */
-export const VOLUMETRIC_TREE_VISIBLE_LAYERS = Object.freeze([
+/** Layers that render visible Tree geometry when circle overlays are absent. */
+export const TREE_VISIBLE_WITHOUT_CIRCLE_LAYERS = Object.freeze([
   RENDER_LAYERS.spheres,
   RENDER_LAYERS.connections,
 ]);
 
-/** Safe default when the current selection cannot show a Volumetric Tree. */
-export const VOLUMETRIC_TREE_DEFAULT_LAYERS = Object.freeze([
+/** Safe default when a no-circles Tree mode cannot show the current selection. */
+export const TREE_DEFAULT_WITHOUT_CIRCLE_LAYERS = Object.freeze([
   RENDER_LAYERS.spheres,
   RENDER_LAYERS.connections,
 ]);
+
+/** @deprecated Use TREE_VISIBLE_WITHOUT_CIRCLE_LAYERS */
+export const VOLUMETRIC_TREE_VISIBLE_LAYERS = TREE_VISIBLE_WITHOUT_CIRCLE_LAYERS;
+
+/** @deprecated Use TREE_DEFAULT_WITHOUT_CIRCLE_LAYERS */
+export const VOLUMETRIC_TREE_DEFAULT_LAYERS = TREE_DEFAULT_WITHOUT_CIRCLE_LAYERS;
+
+/** Tree view modes whose generated data includes planar circle overlays. */
+const TREE_MODES_WITH_CIRCLE_OVERLAYS = new Set(["traditional", "geometric"]);
 
 /** @type {readonly UiRenderLayerOption[]} */
 export const UI_RENDER_LAYER_OPTIONS = Object.freeze([
@@ -182,18 +191,40 @@ export function labelForRenderLayer(id) {
 }
 
 /**
+ * Whether a Tree view mode emits circle-center overlays in its construction data.
+ * @param {string} viewMode
+ */
+export function treeModeUsesCircleOverlays(viewMode) {
+  return TREE_MODES_WITH_CIRCLE_OVERLAYS.has(viewMode);
+}
+
+/**
+ * Ensure a Tree layer selection can render visible geometry for the given view mode.
+ * Spatial and Volumetric data omit circle centers — drop circles and add spheres +
+ * connections when needed. Traditional and Geometric preserve circle overlays.
+ * @param {string} viewMode
+ * @param {Iterable<string> | string | null | undefined} layers
+ * @returns {string[]}
+ */
+export function ensureTreeRenderLayersForViewMode(viewMode, layers) {
+  const normalized = normalizeRenderLayers(layers, []);
+  if (treeModeUsesCircleOverlays(viewMode)) {
+    return normalized.length ? normalized : [...DEFAULT_ACTIVE_RENDER_LAYERS];
+  }
+
+  const withoutCircles = normalized.filter((id) => id !== RENDER_LAYERS.circles);
+  const hasVisibleTreeGeometry = withoutCircles.some((id) =>
+    TREE_VISIBLE_WITHOUT_CIRCLE_LAYERS.includes(id)
+  );
+  if (hasVisibleTreeGeometry) return withoutCircles;
+  return [...TREE_DEFAULT_WITHOUT_CIRCLE_LAYERS];
+}
+
+/**
  * Ensure a Volumetric Tree layer selection can render visible geometry.
- * Drops circle overlays (no circle centers in volumetric data) and adds
- * spheres + connections when the remaining selection would be empty.
  * @param {Iterable<string> | string | null | undefined} layers
  * @returns {string[]}
  */
 export function ensureVolumetricTreeRenderLayers(layers) {
-  const normalized = normalizeRenderLayers(layers, []);
-  const withoutCircles = normalized.filter((id) => id !== RENDER_LAYERS.circles);
-  const hasVisibleTreeGeometry = withoutCircles.some((id) =>
-    VOLUMETRIC_TREE_VISIBLE_LAYERS.includes(id)
-  );
-  if (hasVisibleTreeGeometry) return withoutCircles;
-  return [...VOLUMETRIC_TREE_DEFAULT_LAYERS];
+  return ensureTreeRenderLayersForViewMode("volumetric", layers);
 }

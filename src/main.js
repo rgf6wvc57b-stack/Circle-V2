@@ -34,6 +34,7 @@ import {
   RENDER_LAYERS,
   RENDER_LAYER_DRAW_ORDER,
   coerceToUiRenderMode,
+  ensureTreeRenderLayersForViewMode,
   ensureVolumetricTreeRenderLayers,
   isRenderLayerId,
   isUiRenderMode,
@@ -42,6 +43,7 @@ import {
   legacyModeFromLayers,
   normalizeRenderLayers,
   summarizeRenderLayers,
+  TREE_DEFAULT_WITHOUT_CIRCLE_LAYERS,
   VOLUMETRIC_TREE_DEFAULT_LAYERS,
   VOLUMETRIC_TREE_VISIBLE_LAYERS,
 } from "./engine/renderer/uiRenderModes.js";
@@ -1703,8 +1705,8 @@ function syncEndlessUI() {
 }
 
 function preferredRenderLayersForTree(viewMode) {
-  if (viewMode === "volumetric") {
-    return [...VOLUMETRIC_TREE_DEFAULT_LAYERS];
+  if (viewMode === "volumetric" || viewMode === "spatial") {
+    return [...TREE_DEFAULT_WITHOUT_CIRCLE_LAYERS];
   }
   return [
     RENDER_LAYERS.spheres,
@@ -1714,12 +1716,16 @@ function preferredRenderLayersForTree(viewMode) {
   ];
 }
 
+function treeViewModeNeedsLayerCompatibility(viewMode) {
+  return viewMode === "volumetric" || viewMode === "spatial";
+}
+
 function applyTreeViewModeRenderLayers(viewMode) {
-  if (viewMode === "volumetric") {
+  if (treeViewModeNeedsLayerCompatibility(viewMode)) {
     const source = ui.userPickedRenderer
       ? ui.activeRenderLayers
-      : preferredRenderLayersForTree("volumetric");
-    ui.activeRenderLayers = new Set(ensureVolumetricTreeRenderLayers(source));
+      : preferredRenderLayersForTree(viewMode);
+    ui.activeRenderLayers = new Set(ensureTreeRenderLayersForViewMode(viewMode, source));
   } else if (!ui.userPickedRenderer) {
     ui.activeRenderLayers = new Set(preferredRenderLayersForTree(viewMode));
   }
@@ -2740,8 +2746,11 @@ if (ui.geometry === "treeOfLife") {
 }
 
 engine.regenerate();
-if (ui.geometry === "treeOfLife" && ui.treeViewMode === "volumetric") {
-  const ensured = ensureVolumetricTreeRenderLayers(ui.activeRenderLayers);
+if (ui.geometry === "treeOfLife") {
+  const ensured = ensureTreeRenderLayersForViewMode(
+    ui.treeViewMode,
+    ui.activeRenderLayers
+  );
   if (!layersEqual(ui.activeRenderLayers, ensured)) {
     ui.activeRenderLayers = new Set(ensured);
     syncDerivedRenderMode();
@@ -3183,6 +3192,19 @@ window.__volumetricTestHooks = {
       if (obj.userData?.kind === "line") count += 1;
     });
     return count;
+  },
+  countSceneCircleMeshes: () => {
+    let count = 0;
+    designGroup.traverse((obj) => {
+      if (obj.userData?.kind === "circle") count += 1;
+    });
+    return count;
+  },
+  selectTreeViewMode: (mode) => {
+    const sel = document.getElementById("treeViewMode");
+    if (!sel) return;
+    sel.value = mode;
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
   },
   getCircleCenterCount: () =>
     (engine.getVisibleData() ?? engine.getFullData())?.circleCenters?.length ?? 0,
