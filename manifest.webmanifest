@@ -1,0 +1,18 @@
+{
+  "name": "Circle",
+  "short_name": "Circle",
+  "description": "Interactive 3D geometry explorer",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#08131f",
+  "theme_color": "#08131f",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/circle-icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
