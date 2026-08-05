@@ -10,6 +10,7 @@ import { createRequire } from "node:module";
 import { setTimeout as sleep } from "node:timers/promises";
 import { generateTreeOfLife } from "../src/engine/generators/index.js";
 import { buildTreeOfLifeConstructionPlan } from "../src/engine/construction/treeOfLifePlan.js";
+import { applyConstructionPlan } from "../src/engine/construction/applyPlan.js";
 import {
   buildVolumetricTreeLayout,
   countVolumetricConstructionSteps,
@@ -116,7 +117,40 @@ const r = 1.2;
       .slice(prevIdx + 1, endIdx + 1)
       .filter((op) => op.type === "drawSphere");
     assert(newDraws.length >= 1, `layer step ${step} reveals at least one sphere`, String(newDraws.length));
+
+    const layerOps = plan.operations.slice(prevIdx + 1, endIdx + 1);
+    const lastOp = layerOps[layerOps.length - 1];
+    assert(lastOp?.type === "drawSphere", `layer step ${step} ends on drawSphere`, lastOp?.type ?? "none");
+
+    const placedIds = new Set(
+      plan.operations
+        .slice(0, endIdx + 1)
+        .filter((op) => op.type === "placePoint")
+        .map((op) => op.pointId)
+    );
+    const expectedEdges = layout.paths
+      .filter((path) => placedIds.has(path.from) && placedIds.has(path.to))
+      .map((path) => path.id);
+    const applied = applyConstructionPlan(plan, endIdx);
+    const visibleEdgeIds = applied.edges
+      .filter((edge) => edge.meta?.kind === "treePath")
+      .map((edge) => edge.id);
+    for (const edgeId of expectedEdges) {
+      assert(
+        visibleEdgeIds.includes(edgeId),
+        `layer step ${step} shows ready path ${edgeId}`,
+        `visible=${visibleEdgeIds.length} expected=${expectedEdges.length}`
+      );
+    }
   }
+
+  const finalIdx = plan.operationIndexForSphereCount(plan.sphereCount);
+  const finalApplied = applyConstructionPlan(plan, finalIdx);
+  assert(
+    finalApplied.edges.filter((edge) => edge.meta?.kind === "treePath").length === 22,
+    "final layer step shows all 22 tree paths",
+    String(finalApplied.edges.length)
+  );
 }
 
 // --- Generator + plan + engine totals stay aligned ---

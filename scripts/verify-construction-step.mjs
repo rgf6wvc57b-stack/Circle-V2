@@ -12,6 +12,8 @@ import {
   clampConstructionStep,
   formatConstructionStepLabel,
   isInvalidConstructionStep,
+  isLegacyFullConstructionStep,
+  resolveConstructionStep,
 } from "../src/app/constructionStep.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -29,17 +31,30 @@ function assert(condition, message, detail = "") {
 const SENTINEL = Number.MAX_SAFE_INTEGER;
 const SENTINEL_STR = String(SENTINEL);
 
-assert(isInvalidConstructionStep(SENTINEL), "MAX_SAFE_INTEGER is invalid");
+assert(isLegacyFullConstructionStep(SENTINEL), "MAX_SAFE_INTEGER is legacy full-step sentinel");
+assert(!isInvalidConstructionStep(SENTINEL), "legacy sentinel is not treated as invalid for load");
 assert(isInvalidConstructionStep(NaN), "NaN is invalid");
 assert(!isInvalidConstructionStep(5), "5 is valid");
 assert(clampConstructionStep(SENTINEL, 10) === 10, "clamp sentinel to max");
+assert(resolveConstructionStep(SENTINEL, 19) === 19, "resolve sentinel to engine max");
+assert(resolveConstructionStep(3, 10) === 3, "resolve preserves valid saved step");
+assert(resolveConstructionStep(NaN, 10) === 10, "resolve non-finite to max");
+assert(resolveConstructionStep(-4, 10) === 0, "resolve negative to 0");
 assert(clampConstructionStep(99, 10) === 10, "clamp high value to max");
 assert(clampConstructionStep(-3, 10) === 0, "clamp negative to 0");
 assert(clampConstructionStep(0, 10) === 0, "allow step 0");
 assert(formatConstructionStepLabel(3, 10) === "3 / 10", "format step label");
 
 const mainSrc = readFileSync(join(root, "src/main.js"), "utf8");
-assert(!/ui\.constructionStep\s*=\s*Number\.MAX_SAFE_INTEGER/.test(mainSrc), "main.js no longer assigns MAX_SAFE_INTEGER");
+assert(
+  /isLegacyFullConstructionStep\(savedStep\)/.test(mainSrc),
+  "loadState preserves legacy full-step sentinel until engine max is known"
+);
+assert(
+  !/ui\.constructionStep\s*=\s*Number\.MAX_SAFE_INTEGER/.test(mainSrc) ||
+    /isLegacyFullConstructionStep\(savedStep\)/.test(mainSrc),
+  "main.js only rehydrates MAX_SAFE_INTEGER for legacy saved state"
+);
 
 await run("npm", ["run", "build"]);
 
@@ -126,6 +141,50 @@ try {
     }
   });
   assert(evolutionOk.ok, "evolution mode syncDiscovery does not throw", evolutionOk.error ?? "");
+
+  const legacyPage = await browser.newPage();
+  await legacyPage.evaluateOnNewDocument(() => {
+    localStorage.clear();
+    localStorage.setItem("geometry-explor:show-intro-on-open", "0");
+    localStorage.setItem(
+      "geometryExplorState_v1",
+      JSON.stringify({
+        geometry: "flowerOfLife",
+        constructionStep: 9007199254740991,
+        activeRenderLayers: ["spheres"],
+        radius: 1.2,
+      })
+    );
+  });
+  await legacyPage.goto(base, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await sleep(1200);
+
+  const legacyUpgrade = await legacyPage.evaluate((sentinelStr) => {
+    const key = "geometryExplorState_v1";
+    return {
+      layersValue: document.getElementById("layersValue")?.textContent ?? "",
+      sliderValue: document.getElementById("layers")?.value ?? "",
+      sliderMax: document.getElementById("layers")?.max ?? "",
+      uiStep: window.__constructionTestHooks?.getUiConstructionStep?.(),
+      saved: localStorage.getItem(key),
+      hasSentinelInSaved: localStorage.getItem(key)?.includes(sentinelStr) ?? false,
+    };
+  }, SENTINEL_STR);
+
+  await legacyPage.close();
+
+  assert(!legacyUpgrade.layersValue.includes(SENTINEL_STR), "legacy upgrade label has no sentinel", legacyUpgrade.layersValue);
+  assert(!legacyUpgrade.hasSentinelInSaved, "legacy upgrade does not persist sentinel");
+  assert(
+    Number(legacyUpgrade.uiStep) === Number(legacyUpgrade.sliderMax),
+    "legacy sentinel upgrades to full geometry step",
+    `${legacyUpgrade.uiStep} vs max ${legacyUpgrade.sliderMax}`
+  );
+  assert(
+    legacyUpgrade.layersValue === `${legacyUpgrade.sliderMax} / ${legacyUpgrade.sliderMax}`,
+    "legacy sentinel shows full current / total",
+    legacyUpgrade.layersValue
+  );
 
   await browser.close();
 } finally {

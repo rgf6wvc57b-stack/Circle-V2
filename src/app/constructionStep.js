@@ -12,7 +12,10 @@ export function clampConstructionStep(step, maxStep) {
   if (max === 0) return 0;
 
   const raw = Number(step);
-  if (!Number.isFinite(raw) || raw === Number.MAX_SAFE_INTEGER) {
+  if (isLegacyFullConstructionStep(raw)) {
+    return max;
+  }
+  if (!Number.isFinite(raw)) {
     return max;
   }
   if (raw < 0) return 0;
@@ -20,12 +23,35 @@ export function clampConstructionStep(step, maxStep) {
 }
 
 /**
+ * Legacy saved state used MAX_SAFE_INTEGER to mean "show full geometry".
+ * @param {unknown} value
+ */
+export function isLegacyFullConstructionStep(value) {
+  return Number(value) === Number.MAX_SAFE_INTEGER;
+}
+
+/**
  * @param {unknown} value
  * @returns {boolean}
  */
 export function isInvalidConstructionStep(value) {
+  if (isLegacyFullConstructionStep(value)) return false;
   const n = Number(value);
-  return !Number.isFinite(n) || n === Number.MAX_SAFE_INTEGER || n < 0;
+  return !Number.isFinite(n) || n < 0;
+}
+
+/**
+ * Resolve a saved construction step once the engine max is known.
+ * Maps the legacy full-geometry sentinel to max; clamps other values safely.
+ * @param {number} step
+ * @param {number} maxStep
+ * @returns {number}
+ */
+export function resolveConstructionStep(step, maxStep) {
+  const max = Math.max(0, Math.round(Number(maxStep) || 0));
+  if (max === 0) return 0;
+  if (isLegacyFullConstructionStep(step)) return max;
+  return clampConstructionStep(step, max);
 }
 
 /**

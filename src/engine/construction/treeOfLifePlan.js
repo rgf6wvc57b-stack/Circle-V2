@@ -77,6 +77,8 @@ function buildVolumetricPlan(r, opts) {
           layer: layerIdx,
         },
       });
+      placed.add(s.id);
+      addReadyPaths();
       operations.push({
         type: "drawSphere",
         sphereId: `sphere-${s.id}`,
@@ -86,9 +88,7 @@ function buildVolumetricPlan(r, opts) {
         justification: `Draw 3D Sephirah sphere for ${s.label} on volumetric layer ${layerIdx + 1}.`,
         center: point,
       });
-      placed.add(s.id);
     });
-    addReadyPaths();
     layerEndOpIndices.push(operations.length - 1);
   });
 

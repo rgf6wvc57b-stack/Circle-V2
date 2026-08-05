@@ -94,6 +94,8 @@ import {
   clampConstructionStep,
   formatConstructionStepLabel,
   isInvalidConstructionStep,
+  isLegacyFullConstructionStep,
+  resolveConstructionStep,
 } from "./app/constructionStep.js";
 const canvas = document.getElementById("viewport");
 const appRoot = document.getElementById("app");
@@ -156,6 +158,8 @@ const ui = {
   radius: 1.2,
   pathThickness: 1,
   constructionStep: 1,
+  /** @type {boolean} Legacy saved state used MAX_SAFE_INTEGER for full geometry. */
+  pendingLegacyFullConstructionStep: false,
   constructionMode: false,
   evolutionMode: false,
   /** Endless geometry: max lattice ring depth (R). */
@@ -438,6 +442,30 @@ function syncSphereColorUI() {
   }
 }
 
+function upgradeLegacyConstructionStepInStorage(maxStep) {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const state = JSON.parse(raw);
+    if (!isLegacyFullConstructionStep(state.constructionStep)) return;
+    state.constructionStep = resolveConstructionStep(state.constructionStep, maxStep);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (error) {
+    console.warn("Failed to upgrade legacy construction step", error);
+  }
+}
+
+function peekLegacyFullConstructionStepInStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+    const state = JSON.parse(raw);
+    return isLegacyFullConstructionStep(state.constructionStep);
+  } catch {
+    return false;
+  }
+}
+
 function saveState() {
   try {
     const state = {
@@ -547,7 +575,11 @@ function loadState() {
     }
 
     Object.assign(ui, state);
-    if (isInvalidConstructionStep(ui.constructionStep)) {
+    const savedStep = state.constructionStep;
+    ui.pendingLegacyFullConstructionStep = isLegacyFullConstructionStep(savedStep);
+    if (ui.pendingLegacyFullConstructionStep) {
+      ui.constructionStep = Number.MAX_SAFE_INTEGER;
+    } else if (isInvalidConstructionStep(ui.constructionStep)) {
       ui.constructionStep = 1;
     }
     normalizeVolumetricUiState();
@@ -2648,16 +2680,27 @@ applyAppearance();
 
 // Show the complete geometry when Construction Mode is off.
 const maxStep = engine.getMaxStep();
-ui.constructionStep = maxStep;
+const hadLegacyFullConstructionStep =
+  ui.pendingLegacyFullConstructionStep ||
+  isLegacyFullConstructionStep(ui.constructionStep) ||
+  peekLegacyFullConstructionStepInStorage();
+ui.constructionStep = hadLegacyFullConstructionStep
+  ? maxStep
+  : resolveConstructionStep(ui.constructionStep, maxStep);
+ui.pendingLegacyFullConstructionStep = false;
+if (hadLegacyFullConstructionStep) {
+  upgradeLegacyConstructionStepInStorage(maxStep);
+  saveState();
+}
 
 const layersSlider = document.getElementById("layers");
 if (layersSlider) {
   layersSlider.max = String(maxStep);
-  layersSlider.value = String(maxStep);
+  layersSlider.value = String(ui.constructionStep);
 }
 
 engine.setConstructionMode(false);
-showStaticStep(maxStep, { reframe: false });
+showStaticStep(ui.constructionStep, { reframe: false });
 
 syncConstructionUI();
 syncDisplayOverlays();
@@ -2985,6 +3028,7 @@ window.__studyTestHooks = {
 
 window.__constructionTestHooks = {
   getUiConstructionStep: () => ui.constructionStep,
+  hadPendingLegacyFullConstructionStep: () => ui.pendingLegacyFullConstructionStep,
   selectTreeMode: async (mode) => {
     const geo = document.getElementById("geometry");
     if (geo.value !== "treeOfLife") {
