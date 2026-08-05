@@ -86,6 +86,11 @@ import {
   computeStudyViewLayout,
 } from "./studies/studyLayout.js";
 import { normalizeVolumetricOpts } from "./engine/treeOfLife/volumetricLayout.js";
+import {
+  clampConstructionStep,
+  formatConstructionStepLabel,
+  isInvalidConstructionStep,
+} from "./app/constructionStep.js";
 const canvas = document.getElementById("viewport");
 const appRoot = document.getElementById("app");
 
@@ -94,13 +99,13 @@ let guidedTutorial = null;
 
 const TREE_VIEW_HINTS = {
   traditional:
-    "Traditional: complete Kabbalistic diagram — 10 Sephirot and 22 paths in one plane.",
+    "Planar Diagram: flat Kircher layout at z=0 with circle overlays and thin path tubes.",
   spatial:
-    "Spatial: the same planar Tree coordinates as Traditional, drawn as 3D spheres and path tubes.",
+    "Pillar Depth: Sephirot on three Z planes (Severity −Z, Middle 0, Mercy +Z) — shallow 3D spheres and paths.",
   geometric:
-    "Geometric: the same planar 10+22 Tree graph, plus construction circles, intersections, and optional FoL overlay.",
+    "Scaffold Depth: layered Sephirot Z plus construction circles, intersections, and symmetry axes in 3D space.",
   volumetric:
-    "Volumetric 3D Tree: Sephirot placed at explicit x, y, z coordinates across multiple depth layers — a true 3D branching structure.",
+    "Volumetric 3D Tree: full multi-layer depth growth with explicit x, y, z coordinates and layer-by-layer construction.",
 };
 
 const RENDERING_PRESETS = {
@@ -437,7 +442,7 @@ function saveState() {
       renderMode: ui.renderMode,
       radius: ui.radius,
       pathThickness: ui.pathThickness,
-      constructionStep: ui.constructionStep,
+      constructionStep: clampConstructionStep(ui.constructionStep, getMaxConstructionStep()),
       constructionMode: ui.constructionMode,
       endlessRings: ui.endlessRings,
       endlessExpansionStep: ui.endlessExpansionStep,
@@ -538,6 +543,9 @@ function loadState() {
     }
 
     Object.assign(ui, state);
+    if (isInvalidConstructionStep(ui.constructionStep)) {
+      ui.constructionStep = 1;
+    }
     normalizeVolumetricUiState();
     return true;
   } catch (error) {
@@ -1287,10 +1295,30 @@ function syncDisplayOverlays() {
   syncDiscovery();
 }
 
+function getMaxConstructionStep() {
+  return Math.max(0, engine.getMaxStep());
+}
+
+function resetConstructionStep({ toMax = false } = {}) {
+  const max = getMaxConstructionStep();
+  ui.constructionStep = clampConstructionStep(toMax ? max : 1, max);
+  const layers = document.getElementById("layers");
+  if (layers) {
+    layers.max = String(Math.max(0, max));
+    layers.value = String(ui.constructionStep);
+  }
+  if (!ui.constructionMode) {
+    showStaticStep(ui.constructionStep, { reframe: false });
+  } else {
+    syncStepDisplay();
+    syncLabels();
+  }
+}
+
 function syncDiscovery() {
   const data = engine.getVisibleData() ?? engine.getFullData();
-  let step = ui.constructionStep;
-  let maxStep = engine.getMaxStep();
+  const maxStep = getMaxConstructionStep();
+  let step = clampConstructionStep(ui.constructionStep, maxStep);
   if (ui.evolutionMode) {
     const st = evolution.getState();
     step = st.stepIndex;
@@ -1305,7 +1333,10 @@ function syncDiscovery() {
 function syncLabels() {
   document.getElementById("radiusValue").textContent = ui.radius.toFixed(2);
   document.getElementById("pathThicknessValue").textContent = ui.pathThickness.toFixed(2);
-  document.getElementById("layersValue").textContent = String(ui.constructionStep);
+  const max = getMaxConstructionStep();
+  const stepLabel = formatConstructionStepLabel(ui.constructionStep, max);
+  const layersValue = document.getElementById("layersValue");
+  if (layersValue) layersValue.textContent = stepLabel;
   document.getElementById("animSpeedValue").textContent = ui.animSpeed.toFixed(2);
   document.getElementById("colorIntensityValue").textContent = ui.colorIntensity.toFixed(2);
   document.getElementById("blendStrengthValue").textContent = ui.blendStrength.toFixed(2);
@@ -1336,26 +1367,33 @@ function syncLabels() {
 
 function syncStepDisplay() {
   const state = player.getState();
-  const total = state.totalSteps || engine.getMaxStep();
+  const total = Math.max(0, state.totalSteps || getMaxConstructionStep());
   const current = ui.constructionMode
-    ? Math.max(1, state.displayStep || state.step || 1)
-    : ui.constructionStep;
+    ? clampConstructionStep(Math.max(1, state.displayStep || state.step || 1), total)
+    : clampConstructionStep(ui.constructionStep, total);
+  if (!ui.constructionMode) {
+    ui.constructionStep = current;
+  }
   document.getElementById("stepCurrent").textContent = String(current);
   document.getElementById("stepTotal").textContent = String(total);
 
   const slider = document.getElementById("layers");
-  slider.max = String(total);
+  slider.max = String(Math.max(0, total));
+  slider.value = String(current);
   if (!ui.constructionMode) {
-    document.getElementById("layersValue").textContent = String(ui.constructionStep);
+    const layersValue = document.getElementById("layersValue");
+    if (layersValue) layersValue.textContent = formatConstructionStepLabel(current, total);
   }
 
   const constructionSlider = document.getElementById("constructionStepSlider");
   const constructionSliderValue = document.getElementById("constructionStepSliderValue");
   if (constructionSlider) {
-    constructionSlider.max = String(Math.max(1, total));
+    constructionSlider.max = String(Math.max(0, total));
     if (ui.constructionMode) {
       constructionSlider.value = String(current);
-      if (constructionSliderValue) constructionSliderValue.textContent = String(current);
+      if (constructionSliderValue) {
+        constructionSliderValue.textContent = formatConstructionStepLabel(current, total);
+      }
     }
   }
 }
@@ -1375,7 +1413,9 @@ function applyAppearance() {
 function showStaticStep(step, { reframe = true } = {}) {
   player.pause();
   engine.setConstructionMode(false);
-  engine.setStep(step);
+  const max = getMaxConstructionStep();
+  ui.constructionStep = clampConstructionStep(step, max);
+  engine.setStep(Math.max(1, ui.constructionStep || max || 1));
   applyAppearance();
   const visible = engine.getVisibleData();
   engine.clearDrawProgress();
@@ -1405,7 +1445,8 @@ function exitConstructionMode() {
   document.getElementById("autoPlay").checked = false;
   ui.autoPlay = false;
   engine.setConstructionMode(false);
-  ui.constructionStep = Number.MAX_SAFE_INTEGER;
+  const max = getMaxConstructionStep();
+  ui.constructionStep = clampConstructionStep(max, max);
   showStaticStep(ui.constructionStep, { reframe: false });
   syncConstructionUI();
   syncWorldDecor();
@@ -1631,13 +1672,12 @@ function rebuildFromGenerator() {
   syncTreeViewUI();
   syncEndlessUI();
 
-  const max = engine.getMaxStep();
+  const max = getMaxConstructionStep();
   document.getElementById("layers").max = String(max);
-  if (ui.geometry === "endless") {
-    ui.constructionStep = max;
-  } else if (ui.constructionStep > max) {
-    ui.constructionStep = max;
-  }
+  ui.constructionStep = clampConstructionStep(
+    ui.geometry === "endless" ? max : ui.constructionStep,
+    max
+  );
   document.getElementById("layers").value = String(ui.constructionStep);
 
   if (ui.constructionMode) {
@@ -1720,8 +1760,7 @@ player.onChange = () => {
 function bindControls() {
   document.getElementById("geometry").addEventListener("change", (e) => {
     ui.geometry = e.target.value;
-    ui.constructionStep = 1;
-    document.getElementById("layers").value = "1";
+    resetConstructionStep({ toMax: false });
     if (ui.geometry !== "endless") stopEndlessAutoExpand();
     if (ui.geometry === "endless") {
       ui.endlessExpansionStep = clampEndlessExpansionStep(
@@ -1782,6 +1821,7 @@ function bindControls() {
 
   document.getElementById("treeViewMode").addEventListener("change", (e) => {
     ui.treeViewMode = e.target.value;
+    resetConstructionStep({ toMax: false });
     if (!ui.userPickedRenderer) {
       ui.activeRenderLayers = new Set(preferredRenderLayersForTree(ui.treeViewMode));
       syncDerivedRenderMode();
@@ -1923,7 +1963,7 @@ function bindControls() {
   });
 
   document.getElementById("layers").addEventListener("input", (e) => {
-    ui.constructionStep = Number(e.target.value);
+    ui.constructionStep = clampConstructionStep(Number(e.target.value), getMaxConstructionStep());
     syncLabels();
     if (!ui.constructionMode) showStaticStep(ui.constructionStep);
     saveState();
@@ -2927,6 +2967,21 @@ window.__studyTestHooks = {
       }
     }
     return { goldSpan: maxSpan, goldPixels, availWidth: rect.width, scanWidth };
+  },
+};
+
+window.__constructionTestHooks = {
+  getUiConstructionStep: () => ui.constructionStep,
+  selectTreeMode: async (mode) => {
+    const geo = document.getElementById("geometry");
+    if (geo.value !== "treeOfLife") {
+      geo.value = "treeOfLife";
+      geo.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    const sel = document.getElementById("treeViewMode");
+    sel.value = mode;
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
   },
 };
 

@@ -11,9 +11,9 @@ export const TREE_VIEW_MODES = Object.freeze({
 });
 
 export const TREE_VIEW_MODE_LABELS = Object.freeze({
-  traditional: "Traditional (planar)",
-  spatial: "Spatial (planar spheres)",
-  geometric: "Geometric (planar scaffold)",
+  traditional: "Planar Diagram",
+  spatial: "Pillar Depth (shallow 3D)",
+  geometric: "Scaffold Depth (layered 3D)",
   volumetric: "Volumetric 3D Tree",
 });
 

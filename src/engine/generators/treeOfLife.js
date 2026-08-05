@@ -5,6 +5,7 @@ import {
   normalizeGeometricFlags,
 } from "../treeOfLife/geometricLayout.js";
 import { normalizeTreeViewMode, TREE_VIEW_MODES } from "../treeOfLife/modes.js";
+import { applyPillarDepth, centerSephirot } from "../treeOfLife/spatialLayout.js";
 import {
   buildVolumetricTreeLayout,
   normalizeVolumetricOpts,
@@ -87,6 +88,11 @@ function generateDiagram(radius, viewMode, opts) {
     sephiraRadiusRatio: ratio,
   });
 
+  let sephirot = graph.sephirot;
+  if (viewMode === TREE_VIEW_MODES.SPATIAL) {
+    sephirot = centerSephirot(applyPillarDepth(graph.sephirot, radius, 0.22));
+  }
+
   const data = createEmptyConstruction("treeOfLife", "Tree of Life", radius);
   data.meta = {
     kind: "treeOfLife",
@@ -94,14 +100,16 @@ function generateDiagram(radius, viewMode, opts) {
     variant: graph.variant,
     connectivity: treeConnectivityFingerprint(graph),
     foundation: false,
+    layoutKind: viewMode === TREE_VIEW_MODES.SPATIAL ? "pillarDepth" : "planar",
   };
 
-  graph.sephirot.forEach((s, i) => {
-    pushSephirah(data, s, i + 1, graph.sephiraRadius);
+  const includeCircles = viewMode === TREE_VIEW_MODES.TRADITIONAL;
+  sephirot.forEach((s, i) => {
+    pushSephirah(data, s, i + 1, graph.sephiraRadius, {}, { includeCircles });
   });
 
   pushTreePaths(data, graph.paths);
-  assertTree(data, graph);
+  assertTree(data, { ...graph, sephirot }, { allowDepth: viewMode === TREE_VIEW_MODES.SPATIAL });
   data.maxStep = 10;
   return data;
 }
@@ -221,7 +229,7 @@ function generateGeometric(radius, opts) {
     });
   }
 
-  assertTree(data, graph);
+  assertTree(data, graph, { allowDepth: true });
   data.maxStep = Math.max(10, ...data.points.map((p) => p.step));
   return data;
 }

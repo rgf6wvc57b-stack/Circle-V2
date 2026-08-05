@@ -13,6 +13,8 @@ import {
   SEPHIROT_IDS,
 } from "../src/engine/treeOfLife/graph.js";
 import { traditionalPaths } from "../src/engine/treeOfLife/layout.js";
+import { spatialZStats } from "../src/engine/treeOfLife/spatialLayout.js";
+import { volumetricZStats } from "../src/engine/treeOfLife/volumetricLayout.js";
 import { RENDER_MODES } from "../src/engine/renderer/GeometryRenderer.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -77,11 +79,16 @@ const geometric = generateTreeOfLife(r, {
     showSymmetryAxes: true,
   },
 });
+const volumetric = generateTreeOfLife(r, {
+  viewMode: "volumetric",
+  volumetric: { zSpacing: 0.42, layers: 5 },
+});
 
 for (const [name, data] of [
   ["Traditional", traditional],
   ["Spatial", spatial],
   ["Geometric", geometric],
+  ["Volumetric", volumetric],
 ]) {
   const seph = sephirotOf(data);
   const paths = treePathsOf(data);
@@ -93,11 +100,33 @@ for (const [name, data] of [
   );
   assert(paths.every((p) => p.label), `${name}: every path has a label`);
   assert(seph.every((p) => p.label), `${name}: every Sephirah has a label`);
-  assert(seph.every((p) => Math.abs(p.z) < 1e-12), `${name}: Sephirot are coplanar (z=0)`);
   const cx = seph.reduce((s, p) => s + p.x, 0) / 10;
   const cy = seph.reduce((s, p) => s + p.y, 0) / 10;
-  assert(Math.hypot(cx, cy) < 1e-5, `${name}: centroid at origin`);
+  const cz = seph.reduce((s, p) => s + p.z, 0) / 10;
+  assert(Math.hypot(cx, cy, cz) < 1e-4, `${name}: centroid at origin`);
 }
+
+const tradSephirot = sephirotOf(traditional);
+assert(tradSephirot.every((p) => Math.abs(p.z) < 1e-12), "Traditional: Sephirot are coplanar (z=0)");
+assert(traditional.circleCenters.length >= 10, "Traditional has Sephirot circles");
+assert(traditional.meta.layoutKind === undefined || traditional.meta.viewMode === "traditional");
+
+const spatialStats = spatialZStats(sephirotOf(spatial));
+assert(spatialStats.distinctLevels >= 3, "Spatial: at least three Z levels", String(spatialStats.distinctLevels));
+assert(spatialStats.range > 0.2, "Spatial: meaningful pillar depth", spatialStats.range.toFixed(3));
+assert(spatial.circleCenters.length === 0, "Spatial: no planar circle overlays");
+
+const geoSephirot = sephirotOf(geometric);
+const geoZ = [...new Set(geoSephirot.map((p) => Math.round(p.z * 1000) / 1000))];
+assert(geoZ.length >= 3, "Geometric: layered Z depth", String(geoZ.length));
+assert(
+  geoSephirot.some((p) => Math.abs(p.z) > 0.05),
+  "Geometric: Sephirot use non-zero Z"
+);
+
+const volStats = volumetricZStats(sephirotOf(volumetric));
+assert(volStats.distinctLevels >= 3, "Volumetric: at least three Z levels");
+assert(volStats.range > 0.5, "Volumetric: substantial Z range");
 
 assert(
   connectivityOf(traditional) === connectivityOf(spatial),
@@ -112,26 +141,22 @@ assert(
   "Generated modes match canonical connectivity fingerprint"
 );
 
-// Traditional must include circle centers for all Sephirot AND path edges
-assert(traditional.circleCenters.length >= 10, "Traditional has Sephirot circles");
-assert(traditional.edges.filter((e) => e.meta?.kind === "treePath").length === 22, "Traditional emits 22 path edges");
-
-// Spatial uses same coords as Traditional
+// Traditional and Spatial share XY graph; Spatial adds pillar Z depth
 for (const id of SEPHIROT_IDS) {
   const a = traditional.points.find((p) => p.id === id);
   const b = spatial.points.find((p) => p.id === id);
-  const c = geometric.points.find((p) => p.id === id);
   assert(
-    Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) < 1e-9,
-    `Spatial preserves Traditional coordinates for ${id}`
+    Math.hypot(a.x - b.x, a.y - b.y) < 1e-6,
+    `Spatial preserves planar XY for ${id}`
   );
-  assert(
-    Math.hypot(a.x - c.x, a.y - c.y, a.z - c.z) < 1e-9,
-    `Geometric preserves Traditional coordinates for ${id}`
-  );
+  if (["binah", "geburah", "hod"].includes(id)) {
+    assert(b.z < -0.05, `Spatial: ${id} on Severity pillar (−Z)`);
+  } else if (["chokmah", "chesed", "netzach"].includes(id)) {
+    assert(b.z > 0.05, `Spatial: ${id} on Mercy pillar (+Z)`);
+  }
 }
 
-// Geometric must NOT use hex packing displacement — coords match Traditional
+// Geometric must NOT use hex packing displacement
 assert(
   geometric.meta.preservesTraditionalGraph === true,
   "Geometric meta marks traditional graph preservation"

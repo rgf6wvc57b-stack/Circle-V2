@@ -8,6 +8,7 @@
  */
 import { intersectCirclesEqualRadius } from "../construction/compass.js";
 import { buildCanonicalTreeGraph } from "./graph.js";
+import { centerSephirot } from "./spatialLayout.js";
 import {
   buildFromRules,
   buildSeedOfLifeRules,
@@ -30,6 +31,20 @@ export const DEFAULT_GEOMETRIC_FLAGS = Object.freeze({
   showSymmetryAxes: true,
 });
 
+/** World-layer Z fractions (scaled by radius) — shallower than volumetric. */
+const WORLD_LAYER_Z = Object.freeze({
+  kether: 0.45,
+  chokmah: 0.3,
+  binah: 0.3,
+  chesed: 0.12,
+  geburah: 0.12,
+  tiphereth: 0,
+  netzach: -0.15,
+  hod: -0.15,
+  yesod: -0.32,
+  malkuth: -0.42,
+});
+
 export function normalizeGeometricFlags(flags = {}) {
   return { ...DEFAULT_GEOMETRIC_FLAGS, ...flags };
 }
@@ -46,17 +61,22 @@ export function buildGeometricTreeLayout(radius, opts = {}) {
     sephiraRadiusRatio: 0.16,
   });
 
-  const sephirot = graph.sephirot.map((s) => ({
-    ...s,
-    role: "sephirah",
-    z: 0,
-  }));
+  const depthScale = 0.32;
+  let sephirot = centerSephirot(
+    graph.sephirot.map((s) => ({
+      ...s,
+      role: "sephirah",
+      z: (WORLD_LAYER_Z[s.id] ?? 0) * radius * depthScale,
+    }))
+  );
+
+  const sephirotById = new Map(sephirot.map((s) => [s.id, s]));
 
   // Construction radius: median of the 22 path lengths — equal-radius scaffold
   // that preserves Tree proportions while enabling compass intersections.
   const pathLengths = graph.paths.map((p) => {
-    const a = graph.sephirotById.get(p.from);
-    const b = graph.sephirotById.get(p.to);
+    const a = sephirotById.get(p.from);
+    const b = sephirotById.get(p.to);
     return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
   });
   pathLengths.sort((a, b) => a - b);
@@ -68,7 +88,7 @@ export function buildGeometricTreeLayout(radius, opts = {}) {
     centerId: s.id,
     x: s.x,
     y: s.y,
-    z: 0,
+    z: s.z,
     radius: constructionRadius,
     role: "construction",
   }));
@@ -98,7 +118,7 @@ export function buildGeometricTreeLayout(radius, opts = {}) {
             id: `ix-${a.id}-${b.id}-${k}`,
             x: h.x,
             y: h.y,
-            z: 0,
+            z: (a.z + b.z) / 2,
             label: "",
             role: "intersection",
             parents: [a.id, b.id],
@@ -112,19 +132,19 @@ export function buildGeometricTreeLayout(radius, opts = {}) {
 
   /** Symmetry axes through the Tree (middle pillar + horizontal through Tiphereth) */
   const extent = Math.max(...sephirot.map((s) => Math.hypot(s.x, s.y)), radius) * 1.15;
-  const tiphereth = graph.sephirotById.get("tiphereth");
+  const tiphereth = sephirotById.get("tiphereth");
   const symmetryAxes = [
     {
       id: "axis-middle-pillar",
-      from: { x: 0, y: extent, z: 0 },
-      to: { x: 0, y: -extent, z: 0 },
+      from: { x: 0, y: extent, z: tiphereth.z },
+      to: { x: 0, y: -extent, z: tiphereth.z },
       label: "Middle Pillar",
       role: "symmetryAxis",
     },
     {
       id: "axis-horizontal-tiphereth",
-      from: { x: -extent, y: tiphereth.y, z: 0 },
-      to: { x: extent, y: tiphereth.y, z: 0 },
+      from: { x: -extent, y: tiphereth.y, z: tiphereth.z },
+      to: { x: extent, y: tiphereth.y, z: tiphereth.z },
       label: "Tiphereth Horizon",
       role: "symmetryAxis",
     },
@@ -144,12 +164,13 @@ export function buildGeometricTreeLayout(radius, opts = {}) {
     });
     const cx = tiphereth.x;
     const cy = tiphereth.y;
+    const cz = tiphereth.z;
     [...state.points.values()].forEach((p, k) => {
       flowerOverlay.push({
         id: p.id === "seed-center" ? "flower-ov-center" : `flower-ov-${k - 1}`,
         x: cx + p.x,
         y: cy + p.y,
-        z: 0,
+        z: cz,
         role: "flowerOverlay",
       });
     });

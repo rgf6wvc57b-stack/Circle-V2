@@ -6,6 +6,7 @@ import {
   normalizeGeometricFlags,
 } from "../treeOfLife/geometricLayout.js";
 import { normalizeTreeViewMode, TREE_VIEW_MODES } from "../treeOfLife/modes.js";
+import { applyPillarDepth, centerSephirot } from "../treeOfLife/spatialLayout.js";
 import {
   buildVolumetricTreeLayout,
   normalizeVolumetricOpts,
@@ -105,6 +106,10 @@ function buildDiagramPlan(r, viewMode, opts) {
     variant: opts.variant ?? "kircher",
     sephiraRadiusRatio: ratio,
   });
+  let sephirot = graph.sephirot;
+  if (viewMode === TREE_VIEW_MODES.SPATIAL) {
+    sephirot = centerSephirot(applyPillarDepth(graph.sephirot, r, 0.22));
+  }
   const operations = [];
   const placed = new Set();
 
@@ -144,7 +149,8 @@ function buildDiagramPlan(r, viewMode, opts) {
   };
 
   graph.sephirot.forEach((s) => {
-    const point = vec(s.x, s.y, s.z);
+    const placedSephirah = sephirot.find((p) => p.id === s.id) ?? s;
+    const point = vec(placedSephirah.x, placedSephirah.y, placedSephirah.z);
     operations.push({
       type: "placePoint",
       pointId: s.id,
