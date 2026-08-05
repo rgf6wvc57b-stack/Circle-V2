@@ -282,6 +282,59 @@ assert(
     "3D path median would differ when only Z is amplified",
     `${amplified3DRadius} vs ${amplifiedXYRadius}`
   );
+
+  const coincidenceTol = cr * 0.04;
+  const pointsCoincide3D = (a, b) =>
+    Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) < coincidenceTol;
+  const pointsCoincideXY = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) < coincidenceTol;
+
+  let rawHits = [];
+  for (let i = 0; i < sephirot.length; i += 1) {
+    for (let j = i + 1; j < sephirot.length; j += 1) {
+      const a = sephirot[i];
+      const b = sephirot[j];
+      if (!circlesCoplanar(a, b, CIRCLE_INTERSECTION_Z_EPS)) continue;
+      rawHits = rawHits.concat(intersectCirclesEqualRadius(a, b, cr));
+    }
+  }
+  const xyOnlyFiltered = rawHits.filter((h) => {
+    if (sephirot.some((s) => pointsCoincideXY(s, h))) return false;
+    return true;
+  });
+  assert(
+    layout.intersections.length > xyOnlyFiltered.length,
+    "XYZ coincidence keeps intersections that share XY with Sephirot on another Z layer",
+    `${layout.intersections.length} vs ${xyOnlyFiltered.length}`
+  );
+  assert(
+    layout.intersections.length === rawHits.length,
+    "all coplanar circle intersections are retained with XYZ deduplication",
+    `${layout.intersections.length} vs ${rawHits.length}`
+  );
+
+  const stackedSephirah = sephirot.find((s) =>
+    layout.intersections.some(
+      (ix) =>
+        pointsCoincideXY(s, ix) &&
+        !pointsCoincide3D(s, ix) &&
+        Math.abs(ix.z - s.z) > CIRCLE_INTERSECTION_Z_EPS
+    )
+  );
+  assert(
+    stackedSephirah,
+    "layout includes an intersection stacked in XY above/below a Sephirah"
+  );
+  const preservedIntersection = layout.intersections.find(
+    (ix) =>
+      stackedSephirah &&
+      pointsCoincideXY(stackedSephirah, ix) &&
+      !pointsCoincide3D(stackedSephirah, ix)
+  );
+  assert(
+    preservedIntersection,
+    "same-plane intersection survives when only XY matches a Sephirah on another Z layer",
+    preservedIntersection?.id ?? "none"
+  );
 }
 
 // Planar traditional mode remains unchanged (coplanar z=0 construction still works)

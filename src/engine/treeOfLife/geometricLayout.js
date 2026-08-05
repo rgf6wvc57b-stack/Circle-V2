@@ -81,6 +81,9 @@ export function buildGeometricTreeLayout(radius, opts = {}) {
   });
   pathLengths.sort((a, b) => a - b);
   const constructionRadius = pathLengths[Math.floor(pathLengths.length / 2)];
+  const coincidenceTol = constructionRadius * 0.04;
+  const pointsCoincide = (a, b) =>
+    Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) < coincidenceTol;
 
   /** Construction circles centered on each Sephirah */
   const constructionCircles = sephirot.map((s) => ({
@@ -104,15 +107,11 @@ export function buildGeometricTreeLayout(radius, opts = {}) {
         if (!circlesCoplanar(a, b, CIRCLE_INTERSECTION_Z_EPS)) continue;
         const hits = intersectCirclesEqualRadius(a, b, constructionRadius);
         hits.forEach((h, k) => {
-          if (seen.some((s) => Math.hypot(s.x - h.x, s.y - h.y) < constructionRadius * 0.04)) {
+          if (seen.some((s) => pointsCoincide(s, h))) {
             return;
           }
-          // Skip if coincides with a Sephirah
-          if (
-            sephirot.some(
-              (s) => Math.hypot(s.x - h.x, s.y - h.y) < constructionRadius * 0.04
-            )
-          ) {
+          // Skip if coincides with a Sephirah in 3D (same XY on another Z layer is allowed).
+          if (sephirot.some((s) => pointsCoincide(s, h))) {
             return;
           }
           const pt = {
